@@ -3,28 +3,26 @@ import { NextResponse } from "next/server";
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;
+  const isAuthPage = pathname.startsWith("/auth");
+  const isAuthApi = pathname.startsWith("/api/auth");
+  const isPublicApi = pathname.startsWith("/api/meetings/lookup") || 
+                     pathname === "/api/debug-db" ||
+                     /^\/api\/meetings\/[^/]+\/register$/.test(pathname);
+  const isPublicPage = pathname === "/" || 
+                      pathname.startsWith("/meetings/attend") || 
+                      pathname.startsWith("/meetings/scan");
 
-  // Allow NextAuth routes
-  if (pathname.startsWith("/auth") || pathname.startsWith("/api/auth")) {
+  // Allow auth-related paths to bypass middleware
+  if (isAuthPage || isAuthApi) {
     return NextResponse.next();
   }
 
-  // Allow public meeting attendee pages and their APIs
-  if (
-    pathname.startsWith("/meetings/attend") ||
-    pathname.startsWith("/meetings/scan") ||
-    pathname.startsWith("/api/meetings/lookup") ||
-    /^\/api\/meetings\/[^/]+\/register$/.test(pathname)
-  ) {
+  // Allow public content
+  if (isPublicPage || isPublicApi) {
     return NextResponse.next();
   }
 
-  // Allow the home/explore page and debug routes without authentication
-  if (pathname === "/" || pathname === "/api/debug-db") {
-    return NextResponse.next();
-  }
-
-  // Require authentication for all other routes
+  // Require authentication for everything else
   if (!req.auth) {
     const signInUrl = new URL("/auth/signin", req.nextUrl.origin);
     signInUrl.searchParams.set("callbackUrl", pathname);
@@ -35,5 +33,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|debug.txt|api/debug-db).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|debug.txt|tarkie-full-dark.png).*)"],
 };
