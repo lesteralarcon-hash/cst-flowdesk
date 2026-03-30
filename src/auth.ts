@@ -51,26 +51,20 @@ if (!process.env.AUTH_GOOGLE_ID || !process.env.AUTH_GOOGLE_SECRET) {
   console.warn("⚠️ AUTH_GOOGLE_ID or AUTH_GOOGLE_SECRET is MISSING in environment variables.");
 }
 
-const googleProvider = Google({
-  clientId: process.env.AUTH_GOOGLE_ID,
-  clientSecret: process.env.AUTH_GOOGLE_SECRET,
-  allowDangerousEmailAccountLinking: true,
-});
-
 // FORCE TRUST: NextAuth v5 requires AUTH_TRUST_HOST=true in environments with proxies like Firebase.
 if (!process.env.AUTH_TRUST_HOST) {
   process.env.AUTH_TRUST_HOST = "true";
-}
-
-if (process.env.AUTH_URL) {
-  console.log("✅ AUTH_URL detected:", process.env.AUTH_URL);
 }
 
 const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
   adapter: PrismaAdapter(prisma),
   providers: [
-    googleProvider,
+    Google({
+      clientId: process.env.AUTH_GOOGLE_ID,
+      clientSecret: process.env.AUTH_GOOGLE_SECRET,
+      allowDangerousEmailAccountLinking: true,
+    }),
     credentialsProvider,
   ],
   session: { strategy: "jwt" },
@@ -102,6 +96,11 @@ const { handlers, signIn, signOut, auth } = NextAuth({
       }
       return session;
     },
+  },
+  logger: {
+    error: (e) => console.error("🚨 AUTH_ERROR:", e.message, e.stack, JSON.stringify(e, null, 2)),
+    warn: (e) => console.warn("⚠️ AUTH_WARN:", e),
+    debug: (e) => console.log("🔍 AUTH_DEBUG:", e),
   },
   pages: { 
     signIn: "/auth/signin",

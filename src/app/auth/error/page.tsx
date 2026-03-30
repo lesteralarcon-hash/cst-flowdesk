@@ -100,7 +100,7 @@ function ErrorContent() {
         </div>
 
         <div className="mt-12 opacity-30 text-[10px] font-medium tracking-tight whitespace-nowrap">
-          CST FlowDesk Stability v6.1 - DB Doctor Active
+          CST FlowDesk Stability v7 - Auto-Detect Mode
         </div>
       </div>
     </div>
