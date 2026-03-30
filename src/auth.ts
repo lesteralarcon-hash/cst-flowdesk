@@ -31,25 +31,38 @@ const credentialsProvider = Credentials({
       userData = { id: email, name: email.split("@")[0], email, role };
     }
 
-    if (!userData) return null;
+    if (!userData) {
+      console.warn(`🔓 Auth failed: No user found for email ${email}`);
+      return null;
+    }
 
-    // Upsert the user into the DB so FK constraints (projects, tasks, etc.) work
-    const isAdmin = ADMIN_EMAILS.includes(userData.email);
-    await prisma.user.upsert({
-      where: { email: userData.email },
-      create: {
-        id: userData.id,
-        email: userData.email,
-        name: userData.name,
-        role: userData.role,
-        status: isAdmin ? "approved" : "pending",
-      },
-      update: {
-        name: userData.name,
-        role: userData.role,
-        ...(isAdmin ? { status: "approved" } : {}),
-      },
-    });
+    try {
+      // Upsert the user into the DB so FK constraints (projects, tasks, etc.) work
+      const isAdmin = ADMIN_EMAILS.includes(userData.email);
+      console.log(`💾 Syncing user to DB: ${userData.email}`);
+      
+      await prisma.user.upsert({
+        where: { email: userData.email },
+        create: {
+          id: userData.id,
+          email: userData.email,
+          name: userData.name,
+          role: userData.role,
+          status: isAdmin ? "approved" : "pending",
+        },
+        update: {
+          name: userData.name,
+          role: userData.role,
+          ...(isAdmin ? { status: "approved" } : {}),
+        },
+      });
+      console.log(`✅ User sync complete: ${userData.email}`);
+    } catch (dbError) {
+      console.error("❌ Database sync failed during auth:", dbError);
+      // We still return the user data so they can log in even if DB sync fails 
+      // (though some DB-linked features might break)
+      // HOWEVER, if the error is fatal, this will help see it in logs.
+    }
 
     return userData;
   },
