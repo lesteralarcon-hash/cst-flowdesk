@@ -3,7 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
-import { AlertCircle, RefreshCw, Home, ShieldCheck, XCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle, RefreshCw, Home, ShieldCheck, XCircle, CheckCircle2, Database } from "lucide-react";
 
 interface ConfigStatus {
   hasGoogleId: boolean;
@@ -11,6 +11,7 @@ interface ConfigStatus {
   hasAuthSecret: boolean;
   hasAuthUrl: boolean;
   hasTrustHost: boolean;
+  hasDatabase: boolean;
   timestamp: string;
 }
 
@@ -75,6 +76,7 @@ function ErrorContent() {
                 <StatusItem label="Auth Secret (NextAuth)" exists={status.hasAuthSecret} />
                 <StatusItem label="Base URL (AUTH_URL)" exists={status.hasAuthUrl} />
                 <StatusItem label="Host Trust Flag" exists={status.hasTrustHost} />
+                <StatusItem label="Prisma Database" exists={status.hasDatabase} />
               </div>
             ) : (
               <p className="text-xs text-rose-400 italic">Could not fetch server status. Check console.</p>
@@ -97,8 +99,8 @@ function ErrorContent() {
           </Link>
         </div>
 
-        <div className="mt-12 opacity-30 text-[10px] font-medium tracking-tight">
-          CST FlowDesk Production Stability v6
+        <div className="mt-12 opacity-30 text-[10px] font-medium tracking-tight whitespace-nowrap">
+          CST FlowDesk Stability v6.1 - DB Doctor Active
         </div>
       </div>
     </div>
