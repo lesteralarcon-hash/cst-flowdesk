@@ -110,6 +110,7 @@ function LiveMeetingRoom() {
   const minutesStateRef = useRef<MinutesState>(emptyMinutes);
   const [isUpdatingMinutes, setIsUpdatingMinutes] = useState(false);
   const [minutesLastUpdated, setMinutesLastUpdated] = useState<number | null>(null);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "success" | "error" | "quota">("idle");
 
   // BRD panel
   const emptyBrd: BRDState = { requirements: [], suggestedQuestions: [] };
@@ -153,9 +154,12 @@ function LiveMeetingRoom() {
   const [isEnding, setIsEnding] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [isVerifyingTasks, setIsVerifyingTasks] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verificationStep, setVerificationStep] = useState<"minutes" | "tasks">("minutes");
   const [verifiedTasks, setVerifiedTasks] = useState<{ task: string; owner: string; plannedStart?: string; plannedEnd?: string }[]>([]);
   const [members, setMembers] = useState<{ users: MemberUser[]; roles: MemberRole[] }>({ users: [], roles: [] });
   const notesRef = useRef("");
+  const lastNotesRef = useRef("");
 
   // Tour
   const [showTour, setShowTour] = useState(false);
@@ -229,6 +233,22 @@ function LiveMeetingRoom() {
           } catch {}
         }
 
+        // Restore transcript from DB
+        try {
+          const tRes = await fetch(`/api/meetings/${meetingId}/transcribe`);
+          if (tRes.ok) {
+            const tData = await tRes.json();
+            if (tData.transcript?.rawTranscript) {
+              const lines = tData.transcript.rawTranscript.split("\n").filter((l: string) => l.trim().length > 0);
+              setTranscript(lines);
+              transcriptRef.current = lines;
+              lastProcessedIndexRef.current = lines.length;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to load transcript:", err);
+        }
+
         // Restore notes from localStorage
         const savedNotes = localStorage.getItem(`meeting-notes-${meetingId}`);
         if (savedNotes) setNotes(savedNotes);
@@ -260,10 +280,44 @@ function LiveMeetingRoom() {
 
   // ─── Timer ────────────────────────────────────────────────────────────────
 
+  // ── Timer ────────────────────────────────────────────────────────────────
   useEffect(() => {
     const id = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // ── Browser "Keep-Alive" (Media Session & Silent Audio) ─────────────────────
+  // This prevents Chrome/Safari from putting the tab to sleep during long meetings
+  useEffect(() => {
+    if (typeof window === "undefined" || !("mediaSession" in navigator)) return;
+
+    // 1. Silent Audio Heartbeat
+    const audio = new Audio();
+    audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=";
+    audio.loop = true;
+    
+    const startKeepAlive = async () => {
+      try {
+        await audio.play();
+        // 2. Media Session Metadata (tells OS this is an active "call")
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: "Live Meeting Hub",
+          artist: "Tarkie FlowDesk",
+          album: meetingRef.current?.title || "Active Session",
+        });
+        navigator.mediaSession.playbackState = "playing";
+      } catch (err) {
+        console.warn("Keep-alive failed to start (requires user interaction):", err);
+      }
+    };
+
+    // Trigger on first transcript or when meeting loads
+    const timer = setTimeout(startKeepAlive, 2000);
+    return () => {
+      clearTimeout(timer);
+      audio.pause();
+    };
+  }, [meeting?.title]);
 
   // ─── Auto-scroll transcript ───────────────────────────────────────────────
 
@@ -280,7 +334,14 @@ function LiveMeetingRoom() {
       transcriptRef.current = next;
       return next;
     });
-  }, []);
+
+    // Autosave utterance to DB immediately
+    fetch(`/api/meetings/${meetingId}/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).catch(err => console.error("Auto-sync failed:", err));
+  }, [meetingId]);
 
   const handleInterim = useCallback((text: string) => {
     setInterimText(text);
@@ -323,11 +384,11 @@ function LiveMeetingRoom() {
       const prepContext = buildPrepContext();
 
       // Always update minutes
-      triggerPanel("minutes", newText, minutesStateRef.current, prepContext);
+      triggerPanel("minutes", newText);
 
       // Only update BRD if enabled for this meeting
       if (m?.brdMakerEnabled) {
-        triggerPanel("brd", newText, brdStateRef.current, prepContext);
+        triggerPanel("brd", newText);
       }
     },
     [buildPrepContext] // eslint-disable-line
@@ -335,59 +396,92 @@ function LiveMeetingRoom() {
 
   const triggerPanel = async (
     panel: "minutes" | "brd",
-    newText: string,
-    currentState: any,
-    prepContext: any
+    textToSend?: string,
+    stateOverride?: any,
+    isFullSync = false
   ) => {
-    if (panel === "minutes") setIsUpdatingMinutes(true);
-    else setIsUpdatingBrd(true);
+    if (panel === "minutes") {
+      setIsUpdatingMinutes(true);
+      setSyncStatus("syncing");
+    } else {
+      setIsUpdatingBrd(true);
+    }
+
+    const currentTranscript = transcriptRef.current;
+    // If textToSend is provided, use it. Otherwise, if isFullSync, use entire transcript. 
+    // Otherwise, use slice from lastProcessedIndex.
+    const finalText = textToSend !== undefined 
+      ? textToSend 
+      : (isFullSync 
+          ? currentTranscript.map(t => (typeof t === 'string' ? t : t.text)).join("\n")
+          : currentTranscript.slice(lastProcessedIndexRef.current).join("\n")
+        );
+    
+    const finalState = stateOverride || (panel === "minutes" ? minutesStateRef.current : brdStateRef.current);
+    const prepContext = buildPrepContext();
 
     try {
       const res = await fetch(`/api/meetings/${meetingId}/live-update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ panel, newTranscript: newText, currentState, prepContext, notes }),
+        body: JSON.stringify({ panel, newTranscript: finalText, currentState: finalState, prepContext, notes }),
       });
-      if (!res.ok) return;
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        setSyncStatus("error");
+        showToast(errorData.error || `AI update failed for ${panel}`, "error");
+        return;
+      }
+      
       const data = await res.json();
-      if (!data.state) return;
+      
+      if (data.reason === 'quota' || data.skipped) {
+        setSyncStatus(data.reason === 'quota' ? "quota" : "error");
+        if (data.reason === 'quota') showToast("AI Quota reached. Content extraction might be incomplete.", "error");
+        return;
+      }
+      
+      if (!data.state) {
+        setSyncStatus("error");
+        return;
+      }
+
+      setSyncStatus("success");
+      setTimeout(() => setSyncStatus("idle"), 3000);
 
       if (panel === "minutes") {
         setMinutesState(data.state);
         minutesStateRef.current = data.state;
         setMinutesLastUpdated(Date.now());
         
-        // Inject new clarifications into transcript
-        if (data.state.clarificationsRequired?.length > currentState?.clarificationsRequired?.length) {
-          const newQuestions = data.state.clarificationsRequired.slice(currentState?.clarificationsRequired?.length || 0);
-          newQuestions.forEach((q: string) => {
+        // Inject new clarifications - BATCHED for performance
+        if (data.state.clarificationsRequired?.length > (finalState?.clarificationsRequired?.length || 0)) {
+          const newQuestions = data.state.clarificationsRequired.slice(finalState?.clarificationsRequired?.length || 0);
+          if (newQuestions.length > 0) {
             setTranscript(prev => {
-              const next: (string | { type: "ai"; text: string })[] = [...prev, { type: "ai" as const, text: q }];
+              const additions = newQuestions.map((q: string) => ({ type: "ai" as const, text: q }));
+              const next = [...prev, ...additions];
               transcriptRef.current = next;
               return next;
             });
-          });
+          }
         }
       } else {
         setBrdState(data.state);
         brdStateRef.current = data.state;
         setBrdLastUpdated(Date.now());
-        
-        // Inject new suggested questions into transcript
-        if (data.state.suggestedQuestions?.length > currentState?.suggestedQuestions?.length) {
-          const newQuestions = data.state.suggestedQuestions.slice(currentState?.suggestedQuestions?.length || 0);
-          newQuestions.forEach((q: any) => {
-            const text = typeof q === "string" ? q : q.question;
-            setTranscript(prev => {
-              const next: (string | { type: "ai"; text: string })[] = [...prev, { type: "ai" as const, text }];
-              transcriptRef.current = next;
-              return next;
-            });
-          });
-        }
       }
-    } catch (err) {
+
+      // Update index even on full sync to "exhaust" current content
+      lastProcessedIndexRef.current = currentTranscript.length;
+      if (textToSend === undefined) {
+        lastNotesRef.current = notes;
+      }
+    } catch (err: any) {
       console.error(`${panel} update failed:`, err);
+      setSyncStatus("error");
+      showToast(err.message || "Network error during AI sync", "error");
     } finally {
       if (panel === "minutes") setIsUpdatingMinutes(false);
       else setIsUpdatingBrd(false);
@@ -397,26 +491,31 @@ function LiveMeetingRoom() {
   // ─── Periodic AI panel update (every 20 seconds) ─────────────────────────
   useEffect(() => {
     const id = setInterval(() => {
+      // PAUSE BACKGROUND SYNC during verification to save memory and prevent loops
+      if (isVerifyingTasks || isEnding) return;
+
       const current = transcriptRef.current;
       const lastIdx = lastProcessedIndexRef.current;
-      const currentNotes = notes; 
+      const currentNotes = notesRef.current; 
       
       const transcriptChanged = current.length > lastIdx;
-      const notesChanged = currentNotes !== notesRef.current;
+      const notesChanged = currentNotes !== lastNotesRef.current;
 
       if (!transcriptChanged && !notesChanged) return;
 
       const newItems = transcriptChanged ? current.slice(lastIdx) : [];
-      const newText = newItems.join(" ").trim();
+      // Combine utterances while preserving AI objects if needed? 
+      // Actually fireAIUpdates takes a string.
+      const newText = newItems.map(t => typeof t === 'string' ? t : t.text).join(" ").trim();
       
       lastProcessedIndexRef.current = current.length;
-      notesRef.current = currentNotes;
+      lastNotesRef.current = currentNotes;
       
       fireAIUpdates(newText);
     }, 20000);
 
     return () => clearInterval(id);
-  }, [notes, fireAIUpdates]);
+  }, [isVerifyingTasks, isEnding, fireAIUpdates]);
 
   // Manual "Update AI" button — immediately processes all unprocessed transcript
   const handleManualUpdate = () => {
@@ -472,64 +571,51 @@ function LiveMeetingRoom() {
   const endMeeting = async () => {
     setIsEnding(true);
 
-    // Save final transcript to DB
-    const fullText = transcriptRef.current.join("\n");
-    if (fullText.trim()) {
-      try {
-        await fetch(`/api/meetings/${meetingId}/transcribe`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: fullText }),
-        });
-      } catch {}
-    }
-
-    // Run final post-processing (generates polished minutes, BRD, tasks, and saves flowchart)
-    // We pass the verifiedTasks to override AI defaults if applicable
     try {
-      await fetch(`/api/meetings/${meetingId}/process`, {
+      const res = await fetch(`/api/meetings/${meetingId}/process`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           notes,
           flowchartResult,
           flowContext,
-          verifiedTasks: verifiedTasks.length > 0 ? verifiedTasks : undefined
+          verifiedTasks // Send the array (empty or not)
         })
       });
-    } catch {}
 
-    router.push(`/meetings/${meetingId}/review`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to process meeting");
+      }
+
+      showToast("Meeting finalized successfully", "success");
+      router.push(`/meetings/${meetingId}/review`);
+    } catch (err: any) {
+      console.error("Meeting process error:", err);
+      showToast(err.message || "An error occurred while finalizing the meeting. Please try again.", "error");
+      setIsEnding(false);
+    }
   };
 
   const startVerification = async () => {
-    // If there are unsynced notes or transcript, trigger an immediate update first
-    const current = transcriptRef.current;
-    const lastIdx = lastProcessedIndexRef.current;
-    const currentNotes = notes;
+    setIsVerifying(true);
     
-    const transcriptChanged = current.length > lastIdx;
-    const notesChanged = currentNotes !== notesRef.current;
-
-    if (transcriptChanged || notesChanged) {
-      const newItems = transcriptChanged ? current.slice(lastIdx) : [];
-      const newText = newItems.join(" ").trim();
-      
-      lastProcessedIndexRef.current = current.length;
-      notesRef.current = currentNotes;
-      
-      // Wait for the minutes panel specifically
-      await triggerPanel("minutes", newText, minutesStateRef.current, buildPrepContext());
+    // Always perform a fresh full sync before entering verification to ensure no content is missed
+    try {
+      await triggerPanel("minutes", undefined, undefined, true);
+    } catch (err) {
+      console.error("Verification sync failed:", err);
     }
 
-    // Now clone the refreshed AI-identified action items for review
     const now = new Date().toISOString().split('T')[0];
-    setVerifiedTasks(minutesStateRef.current.actionItems.map(a => ({
+    setVerifiedTasks((minutesStateRef.current.actionItems || []).map(a => ({
       ...a,
       plannedStart: now,
       plannedEnd: now
     })));
+    setVerificationStep("minutes");
     setIsVerifyingTasks(true);
+    setIsVerifying(false);
   };
 
 
@@ -672,6 +758,52 @@ function LiveMeetingRoom() {
           <Sparkles className="w-3.5 h-3.5" />
         </button>
 
+        {/* Sync Status Badge */}
+        {syncStatus !== "idle" && (
+          <div
+            className={`h-6 px-2.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider rounded border transition-all animate-in fade-in slide-in-from-right-2`}
+            style={{
+              background:
+                syncStatus === "syncing" ? "#F5F8FF" :
+                syncStatus === "success" ? "#ECFDF5" :
+                syncStatus === "quota" ? "#FFF7ED" : "#FEF2F2",
+              color:
+                syncStatus === "syncing" ? "#2162F9" :
+                syncStatus === "success" ? "#059669" :
+                syncStatus === "quota" ? "#EA580C" : "#DC2626",
+              borderColor:
+                syncStatus === "syncing" ? "#D1E0FF" :
+                syncStatus === "success" ? "#A7F3D0" :
+                syncStatus === "quota" ? "#FFEDD5" : "#FECACA",
+            }}
+          >
+            {syncStatus === "syncing" && (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Syncing AI...
+              </>
+            )}
+            {syncStatus === "success" && (
+              <>
+                <Check className="w-3 h-3" />
+                Updated
+              </>
+            )}
+            {syncStatus === "quota" && (
+              <>
+                <Lightbulb className="w-3 h-3" />
+                Memory Full
+              </>
+            )}
+            {syncStatus === "error" && (
+              <>
+                <X className="w-3 h-3" />
+                Sync Failed
+              </>
+            )}
+          </div>
+        )}
+
         {/* Manual AI update */}
         <button
           id="tour-update"
@@ -710,13 +842,16 @@ function LiveMeetingRoom() {
             <span className="text-[11px] text-slate-500 font-medium">Verify completion?</span>
             <button
               onClick={startVerification}
-              className="h-6 px-2.5 text-[11px] font-semibold bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+              disabled={isVerifying}
+              className="h-6 px-3 text-[11px] font-semibold bg-red-500 text-white rounded hover:bg-red-600 transition-all active:scale-95 flex items-center gap-1.5 disabled:opacity-60"
             >
-              Start Verification
+              {isVerifying ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {isVerifying ? "Processing..." : "Start Verification"}
             </button>
             <button
+              id="tour-wait"
               onClick={() => setConfirmEnd(false)}
-              className="h-6 px-2.5 text-[11px] font-medium border border-slate-200 rounded hover:bg-slate-50"
+              className="h-6 px-2.5 text-[11px] font-medium border border-slate-200 rounded hover:bg-slate-50 transition-colors"
             >
               Wait
             </button>
@@ -878,7 +1013,7 @@ function LiveMeetingRoom() {
           </div>
 
           {/* Transcript lines */}
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1.5" style={{ scrollbarWidth: "thin" }}>
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-1.5 select-text" style={{ scrollbarWidth: "thin" }}>
             {transcript.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <div
@@ -931,7 +1066,7 @@ function LiveMeetingRoom() {
                   return (
                     <p
                       key={i}
-                      className="text-[13px] leading-relaxed pl-2 border-l-2 transition-colors"
+                      className="text-[13px] leading-relaxed pl-2 border-l-2 transition-colors select-text"
                       style={{
                         color: "#252B37",
                         borderColor: i === transcript.length - 1 && !interimText ? "#2162F9" : "transparent",
@@ -943,7 +1078,7 @@ function LiveMeetingRoom() {
                 })}
                 {interimText && (
                   <p
-                    className="text-[13px] leading-relaxed pl-2 border-l-2 italic"
+                    className="text-[13px] leading-relaxed pl-2 border-l-2 italic select-text"
                     style={{ color: "#9CA3AF", borderColor: "#2162F9" }}
                   >
                     {interimText}
@@ -1432,160 +1567,235 @@ function LiveMeetingRoom() {
 
       {/* Verification Overlay */}
       {isVerifyingTasks && (
-        <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200">
+        <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 font-sans">
+          <div className="w-full max-w-[1400px] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[90vh] border border-slate-200 animate-in zoom-in-95 duration-300">
             {/* Header */}
             <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-white sticky top-0 z-10">
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 rounded-xl bg-[#F1F7FF] flex items-center justify-center text-[#2162F9] shadow-sm">
-                  <CheckSquare2 className="w-5 h-5" />
+                   {verificationStep === "minutes" ? <FileText className="w-5 h-5" /> : <CheckSquare2 className="w-5 h-5" />}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#2162F9]">CST Task Manager</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#2162F9]">CST Meeting Finalizer</p>
                     <span className="w-1 h-1 rounded-full bg-slate-300" />
-                    <p className="text-[10px] font-bold text-slate-400 uppercase">Verification Phase</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">
+                      {verificationStep === "minutes" ? "Step 1: Minutes Review" : "Step 2: Action Items Review"}
+                    </p>
                   </div>
-                  <h2 className="text-xl font-black text-slate-800 tracking-tight">REVIEW ACTION NEXT STEPS</h2>
+                  <h2 className="text-xl font-black text-slate-800 tracking-tight">
+                    {verificationStep === "minutes" ? "REVIEW MINUTES OF MEETING" : "VERIFY ACTION NEXT STEPS"}
+                  </h2>
                 </div>
               </div>
               <button 
                 onClick={() => setIsVerifyingTasks(false)}
                 className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-50 text-slate-400 transition-colors"
+                disabled={isEnding}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* List with scroll */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-3 styled-scroll">
-              {verifiedTasks.length === 0 ? (
-                <div className="py-20 flex flex-col items-center justify-center text-center">
-                  <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mb-4">
-                    <Sparkles className="w-6 h-6 text-slate-300" />
+            {/* Content Area */}
+            <div className="flex-1 overflow-y-auto p-6 styled-scroll bg-[#F9FAFB]">
+              {verificationStep === "minutes" ? (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  {/* Minutes Preview */}
+                  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-6">
+                    {minutesState.keyAgreements.length > 0 && (
+                      <section>
+                        <SectionLabel label="Key Agreements" color="#16A34A" />
+                        <ul className="space-y-2">
+                          {minutesState.keyAgreements.map((item, i) => (
+                            <li key={i} className="flex items-start gap-3">
+                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                              <p className="text-[13px] text-slate-700 leading-relaxed font-medium">{item}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                    {minutesState.discussionPoints.length > 0 && (
+                      <section>
+                        <SectionLabel label="Discussion Points" color="#2563EB" />
+                        <ul className="space-y-2">
+                          {minutesState.discussionPoints.map((item, i) => (
+                            <li key={i} className="flex items-start gap-3">
+                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                              <p className="text-[13px] text-slate-700 leading-relaxed font-medium">{item}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                    {(!minutesState.keyAgreements.length && !minutesState.discussionPoints.length) && (
+                      <div className="py-12 flex flex-col items-center justify-center text-center">
+                        <p className="text-sm font-bold text-slate-400 tracking-tight uppercase">No minutes points extracted yet</p>
+                      </div>
+                    )}
                   </div>
-                  <p className="text-sm font-bold text-slate-400 tracking-tight uppercase">No tasks identified yet</p>
-                  <p className="text-xs text-slate-400 max-w-[240px] mt-1 leading-relaxed">If tasks were discussed, you can add them manually after completion.</p>
                 </div>
               ) : (
-                verifiedTasks.map((item, idx) => (
-                  <div key={idx} className="group relative bg-[#FCFCFC] p-4 rounded-xl border border-slate-100 hover:border-[#2162F9]/20 hover:bg-white hover:shadow-lg hover:shadow-blue-500/5 transition-all">
-                    
-                    <div className="grid grid-cols-12 gap-4 items-start">
-                      {/* Left: Numbering & Task Description */}
-                      <div className="col-span-12 md:col-span-6 space-y-3">
-                        <div className="flex items-start gap-3">
-                          <div className="w-5 h-5 rounded-md bg-white border border-slate-200 flex items-center justify-center text-slate-400 font-bold text-[10px] shrink-0 mt-0.5">
-                            {idx + 1}
-                          </div>
-                          <div className="flex-1">
-                            <label className="text-[9px] font-black uppercase tracking-widest text-[#717680] mb-1 block">Task Description</label>
-                            <textarea 
-                              rows={2}
-                              value={item.task}
-                              onChange={(e) => {
-                                const next = [...verifiedTasks];
-                                next[idx].task = e.target.value;
-                                setVerifiedTasks(next);
-                              }}
-                              className="w-full bg-transparent text-xs font-semibold text-[#252B37] outline-none border-b border-transparent focus:border-[#2162F9] transition-colors resize-none py-0.5"
-                              placeholder="Describe the task..."
-                            />
-                          </div>
-                        </div>
+                <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  {verifiedTasks.length === 0 ? (
+                    <div className="py-20 flex flex-col items-center justify-center text-center">
+                      <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mb-4">
+                        <Sparkles className="w-6 h-6 text-slate-300" />
                       </div>
-
-                      {/* Right: Owner & Dates */}
-                      <div className="col-span-12 md:col-span-6 grid grid-cols-2 gap-3">
-                        <div className="col-span-2">
-                           <label className="text-[9px] font-black uppercase tracking-widest text-[#717680] mb-1 block">Owner</label>
-                           <select 
-                            value={item.owner}
-                            onChange={(e) => {
-                              const next = [...verifiedTasks];
-                              next[idx].owner = e.target.value;
-                              setVerifiedTasks(next);
-                            }}
-                            className="w-full bg-white text-[11px] font-bold text-[#2162F9] outline-none px-3 h-8 rounded-lg border border-slate-200 focus:border-[#2162F9] transition-colors appearance-none"
-                          >
-                            <option value="">— Unassigned —</option>
-                            <optgroup label="System Roles">
-                              {members.roles.map(r => <option key={r.id} value={r.name}>{r.name.toUpperCase()}</option>)}
-                            </optgroup>
-                            <optgroup label="Approved Users">
-                              {members.users.map(u => <option key={u.id} value={u.name || u.email}>{u.name?.toUpperCase() || u.email}</option>)}
-                            </optgroup>
-                          </select>
-                        </div>
-                        
-                        <div>
-                           <label className="text-[9px] font-black uppercase tracking-widest text-[#717680] mb-1 block">Start Date</label>
-                           <input 
-                             type="date"
-                             value={item.plannedStart}
-                             onChange={(e) => {
-                               const next = [...verifiedTasks];
-                               next[idx].plannedStart = e.target.value;
-                               setVerifiedTasks(next);
-                             }}
-                             className="w-full bg-white text-[10px] font-bold text-[#535862] outline-none px-2 h-8 rounded-lg border border-slate-200 focus:border-[#2162F9] transition-colors"
-                           />
-                        </div>
-
-                        <div>
-                           <label className="text-[9px] font-black uppercase tracking-widest text-[#717680] mb-1 block">End Date</label>
-                           <input 
-                             type="date"
-                             value={item.plannedEnd}
-                             onChange={(e) => {
-                               const next = [...verifiedTasks];
-                               next[idx].plannedEnd = e.target.value;
-                               setVerifiedTasks(next);
-                             }}
-                             className="w-full bg-white text-[10px] font-bold text-[#535862] outline-none px-2 h-8 rounded-lg border border-slate-200 focus:border-[#2162F9] transition-colors"
-                           />
-                        </div>
-                      </div>
+                      <p className="text-sm font-bold text-slate-400 tracking-tight uppercase">No tasks identified yet</p>
+                      <p className="text-xs text-slate-400 max-w-[240px] mt-1 leading-relaxed">You can add tasks manually after completion or continue with zero identified tasks.</p>
                     </div>
-
-                    <button 
-                      onClick={() => {
-                        const next = [...verifiedTasks];
-                        next.splice(idx, 1);
-                        setVerifiedTasks(next);
-                      }}
-                      className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-lg transition-all hover:scale-110 active:scale-90 z-20"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))
+                  ) : (
+                    verifiedTasks.map((item, idx) => (
+                      <div key={idx} className="group relative bg-white p-4 rounded-xl border border-slate-100 hover:border-[#2162F9]/20 hover:bg-white hover:shadow-lg hover:shadow-blue-500/5 transition-all">
+                        <div className="grid grid-cols-12 gap-4 items-start">
+                          <div className="col-span-12 md:col-span-6 space-y-3">
+                            <div className="flex items-start gap-3">
+                              <div className="w-5 h-5 rounded-md bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 font-bold text-[10px] shrink-0 mt-0.5">
+                                {idx + 1}
+                              </div>
+                              <div className="flex-1">
+                                <label className="text-[9px] font-black uppercase tracking-widest text-[#717680] mb-1 block">Task Description</label>
+                                <textarea 
+                                  rows={2}
+                                  value={item.task}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setVerifiedTasks(prev => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], task: value };
+                                      return next;
+                                    });
+                                  }}
+                                  className="w-full bg-transparent text-xs font-semibold text-[#252B37] outline-none border-b border-transparent focus:border-[#2162F9] transition-colors resize-none py-0.5"
+                                  placeholder="Describe the task..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          <div className="col-span-12 md:col-span-6 grid grid-cols-2 gap-3">
+                            <div className="col-span-2">
+                               <label className="text-[9px] font-black uppercase tracking-widest text-[#717680] mb-1 block">Owner</label>
+                               <select 
+                                value={item.owner}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setVerifiedTasks(prev => {
+                                    const next = [...prev];
+                                    next[idx] = { ...next[idx], owner: value };
+                                    return next;
+                                  });
+                                }}
+                                className="w-full bg-white text-[11px] font-bold text-[#2162F9] outline-none px-3 h-8 rounded-lg border border-slate-200 focus:border-[#2162F9] transition-colors appearance-none"
+                              >
+                                <option value="">— Unassigned —</option>
+                                <optgroup label="System Roles">
+                                  {members.roles.map(r => <option key={r.id} value={r.name}>{r.name.toUpperCase()}</option>)}
+                                </optgroup>
+                                <optgroup label="Approved Users">
+                                  {members.users.map(u => <option key={u.id} value={u.name || u.email}>{u.name?.toUpperCase() || u.email}</option>)}
+                                </optgroup>
+                              </select>
+                            </div>
+                            <div>
+                               <label className="text-[9px] font-black uppercase tracking-widest text-[#717680] mb-1 block">Start Date</label>
+                               <input 
+                                 type="date"
+                                 value={item.plannedStart}
+                                 onChange={(e) => {
+                                   const value = e.target.value;
+                                   setVerifiedTasks(prev => {
+                                     const next = [...prev];
+                                     next[idx] = { ...next[idx], plannedStart: value };
+                                     return next;
+                                   });
+                                 }}
+                                 className="w-full bg-white text-[10px] font-bold text-[#535862] outline-none px-2 h-8 rounded-lg border border-slate-200 focus:border-[#2162F9] transition-colors"
+                               />
+                            </div>
+                            <div>
+                               <label className="text-[9px] font-black uppercase tracking-widest text-[#717680] mb-1 block">End Date</label>
+                               <input 
+                                 type="date"
+                                 value={item.plannedEnd}
+                                 onChange={(e) => {
+                                   const value = e.target.value;
+                                   setVerifiedTasks(prev => {
+                                     const next = [...prev];
+                                     next[idx] = { ...next[idx], plannedEnd: value };
+                                     return next;
+                                   });
+                                 }}
+                                 className="w-full bg-white text-[10px] font-bold text-[#535862] outline-none px-2 h-8 rounded-lg border border-slate-200 focus:border-[#2162F9] transition-colors"
+                               />
+                            </div>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setVerifiedTasks(prev => {
+                              const next = [...prev];
+                              next.splice(idx, 1);
+                              return next;
+                            });
+                          }}
+                          className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-lg transition-all hover:scale-110 active:scale-90 z-20"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
               )}
             </div>
 
             {/* Footer */}
-            <div className="px-6 py-5 border-t border-slate-100 bg-white flex items-center justify-between sticky bottom-0 z-10">
+            <div className="px-6 py-5 border-t border-slate-100 bg-white flex items-center justify-between sticky bottom-0 z-10 font-sans">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#2162F9]" />
-                <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">
-                  {verifiedTasks.length} {verifiedTasks.length === 1 ? "Item" : "Items"} for task board
-                </span>
+                 {verificationStep === "minutes" ? (
+                   <>
+                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Step 1 of 2: Content Approval</p>
+                   </>
+                 ) : (
+                   <>
+                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Step 2 of 2: Task Assignment</p>
+                   </>
+                 )}
               </div>
               <div className="flex gap-3">
                 <button 
-                  onClick={() => setIsVerifyingTasks(false)}
-                  className="px-5 h-10 rounded-xl text-[11px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition-colors"
-                >
-                  Return
-                </button>
-                <button 
-                  onClick={endMeeting}
+                  onClick={() => {
+                    if (verificationStep === "tasks") setVerificationStep("minutes");
+                    else setIsVerifyingTasks(false);
+                  }}
                   disabled={isEnding}
-                  className="px-8 h-10 bg-[#2162F9] text-white rounded-xl text-[11px] font-black uppercase tracking-widest shadow-lg shadow-blue-500/20 hover:bg-blue-600 transition-all flex items-center gap-2 group active:scale-95 disabled:opacity-60"
+                  className="px-5 h-10 rounded-xl text-[11px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-40"
                 >
-                  {isEnding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 transition-transform group-hover:scale-110" />}
-                  Finalize & Record Tasks
+                  {verificationStep === "tasks" ? "Back to Minutes" : "Return to Meeting"}
                 </button>
+                
+                {verificationStep === "minutes" ? (
+                  <button 
+                    onClick={() => setVerificationStep("tasks")}
+                    className="px-8 h-10 bg-[#2162F9] text-white rounded-xl text-[11px] font-black uppercase tracking-widest shadow-lg shadow-blue-500/20 hover:bg-blue-600 transition-all flex items-center gap-2 group active:scale-95"
+                  >
+                    Next: Review Action Items
+                    <RefreshCw className="w-3.5 h-3.5 transition-transform group-hover:rotate-12" />
+                  </button>
+                ) : (
+                  <button 
+                    onClick={endMeeting}
+                    disabled={isEnding}
+                    className="px-8 h-10 bg-[#2162F9] text-white rounded-xl text-[11px] font-black uppercase tracking-widest shadow-lg shadow-blue-500/20 hover:bg-blue-600 transition-all flex items-center gap-2 group active:scale-95 disabled:opacity-60"
+                  >
+                    {isEnding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    {isEnding ? "Processing Meeting..." : "Finalize & Record"}
+                  </button>
+                )}
               </div>
             </div>
           </div>

@@ -88,8 +88,8 @@ export default function SmartMic({
 
     r.onend = () => {
       setInterimText("");
-      // Auto-restart only if tab is visible and user still wants to listen
-      if (wantsListeningRef.current && document.visibilityState === "visible") {
+      // Auto-restart as long as user still wants to listen (even if tab is hidden)
+      if (wantsListeningRef.current) {
         try { r.start(); } catch { /* already started */ }
       }
     };
@@ -138,30 +138,7 @@ export default function SmartMic({
     onToggle?.(false);
   }, [onToggle]);
 
-  // ── Tab visibility — pause mic when hidden, resume when visible ────────────
-
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        // Pause: stop the recognition instance but keep wantsListening = true
-        if (recognitionRef.current) {
-          try { recognitionRef.current.stop(); } catch { /* ignore */ }
-          recognitionRef.current = null;
-          setInterimText("");
-        }
-      } else if (document.visibilityState === "visible" && wantsListeningRef.current) {
-        // Resume: rebuild and restart
-        const r = buildRecognition();
-        if (r) {
-          recognitionRef.current = r;
-          try { r.start(); } catch { /* ignore */ }
-        }
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [buildRecognition]);
+  // ── Tab visibility — removed "pause on hidden" to allow background multitasking ──
 
   // ── Cleanup on unmount ──────────────────────────────────────────────────────
 

@@ -71,8 +71,16 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid panel. Use "minutes" or "brd".' }, { status: 400 });
     }
 
+    console.log(`[live-update] Processing ${panel} | Transcript Length: ${newTranscript?.length || 0} | Notes Length: ${notes?.length || 0}`);
+
     const result = await model.generateContent(prompt);
-    const rawText = result.response.text().trim();
+    const response = await result.response;
+    const rawText = response.text().trim();
+
+    if (!rawText) {
+      console.warn(`[live-update] AI returned empty response for panel=${panel}`);
+      return NextResponse.json({ panel, state: currentState, skipped: true, reason: 'empty' });
+    }
 
     const state = parseJsonResponse(rawText);
     if (!state) {

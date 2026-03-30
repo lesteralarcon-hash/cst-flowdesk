@@ -178,7 +178,8 @@ If no clear action items were assigned, return an empty array: []`;
     })();
 
     // ── Apply Verification Overrides ──────────────────────────────────────
-    if (Array.isArray(verifiedTasks) && verifiedTasks.length > 0) {
+    if (Array.isArray(verifiedTasks)) {
+      console.log(`[process] Applying user-verified overrides for ${verifiedTasks.length} tasks`);
       // Override Action Next Steps in minutes
       minutesState.actionItems = verifiedTasks.map((v: any) => ({
         task: v.task,
