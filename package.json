@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint"
   },
@@ -21,6 +21,7 @@
     "autoprefixer": "^10.4.27",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
+    "encoding": "^0.1.13",
     "groq-sdk": "^1.1.2",
     "html-to-docx": "^1.8.0",
     "html-to-image": "^1.11.11",
