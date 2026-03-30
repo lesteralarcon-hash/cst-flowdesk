@@ -24,7 +24,7 @@ const credentialsProvider = Credentials({
 
     let userData: { id: string; name: string; email: string; role: string } | null = null;
 
-    if (email === "admin@cst.com" && password === "admin") {
+    if (email === "admin@cst.com" && (password === "admin" || password === process.env.DEV_PASSWORD)) {
       userData = { id: "dev-admin", name: "Dev Admin", email, role: "admin" };
     } else if (isDomainAllowed(email) && password === process.env.DEV_PASSWORD) {
       const role = ADMIN_EMAILS.includes(email) ? "admin" : "user";
