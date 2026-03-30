@@ -10,8 +10,19 @@ export async function GET() {
     // 2. Try a simple query
     const userCount = await prisma.user.count();
     
+    // 3. Read canary version
+    let deployedVersion = "unknown";
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      deployedVersion = fs.readFileSync(path.join(process.cwd(), 'public/debug.txt'), 'utf8');
+    } catch (e) {
+      deployedVersion = "file not found";
+    }
+
     return NextResponse.json({
       status: "connected",
+      deployedVersion,
       databaseUrl: dbUrl ? dbUrl.split('@')[0] : "not set", // Redact sensitive parts
       hasAuthToken: hasToken,
       hasAuthSecret: !!process.env.AUTH_SECRET,
