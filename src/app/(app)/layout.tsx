@@ -1,11 +1,14 @@
 import LeftNav from "@/components/layout/LeftNav";
 import GlobalBar from "@/components/layout/GlobalBar";
+import { auth } from "@/auth";
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const session = await auth();
+
   return (
     <div className="page-shell">
-      <LeftNav />
-      <div className="page-content">
+      {session && <LeftNav />}
+      <div className={session ? "page-content" : "page-content-full"}>
         {children}
       </div>
     </div>

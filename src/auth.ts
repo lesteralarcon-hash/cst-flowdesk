@@ -47,6 +47,16 @@ const credentialsProvider = Credentials({
   },
 });
 
+if (!process.env.AUTH_GOOGLE_ID || !process.env.AUTH_GOOGLE_SECRET) {
+  console.warn("⚠️ AUTH_GOOGLE_ID or AUTH_GOOGLE_SECRET is MISSING in environment variables.");
+}
+
+if (!process.env.AUTH_GOOGLE_ID || !process.env.AUTH_GOOGLE_SECRET) {
+  console.warn("⚠️ AUTH_GOOGLE_ID or AUTH_GOOGLE_SECRET is MISSING in environment variables.");
+} else {
+  console.log("✅ Google Auth variables detected. ID ends in ...", process.env.AUTH_GOOGLE_ID?.slice(-5));
+}
+
 const googleProvider =
   process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
     ? Google({
