@@ -16,5 +16,15 @@ environmentVariables:
     secret: AUTH_GOOGLE_SECRET
   - variable: DEV_PASSWORD
     secret: DEV_PASSWORD
+  - variable: SMTP_HOST
+    secret: SMTP_HOST
+  - variable: SMTP_PORT
+    secret: SMTP_PORT
+  - variable: SMTP_USER
+    secret: SMTP_USER
+  - variable: SMTP_PASS
+    secret: SMTP_PASS
+  - variable: SMTP_FROM
+    secret: SMTP_FROM
   - variable: NEXTAUTH_URL
     value: "https://cst-flow--cst-flowdesk.asia-east1.hosted.app"
