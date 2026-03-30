@@ -19,8 +19,8 @@ export default auth((req) => {
     return NextResponse.next();
   }
 
-  // Allow the home/explore page without authentication
-  if (pathname === "/") {
+  // Allow the home/explore page and debug routes without authentication
+  if (pathname === "/" || pathname === "/api/debug-db") {
     return NextResponse.next();
   }
 
