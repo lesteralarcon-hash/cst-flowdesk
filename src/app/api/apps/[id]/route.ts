@@ -23,9 +23,24 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     if (provider !== undefined)    { sets.push(`provider = ?`);    vals.push(provider ?? null); }
     sets.push(`updatedAt = ?`); vals.push(now);
     vals.push(params.id);
-    await prisma.$executeRawUnsafe(
-      `UPDATE App SET ${sets.join(", ")} WHERE id = ?`, ...vals
-    );
+    try {
+      await prisma.$executeRawUnsafe(
+        `UPDATE App SET ${sets.join(", ")} WHERE id = ?`, ...vals
+      );
+    } catch (e: any) {
+      if (e.message?.includes("provider")) {
+        try {
+          await prisma.$executeRawUnsafe(`ALTER TABLE App ADD COLUMN provider TEXT`);
+          await prisma.$executeRawUnsafe(
+            `UPDATE App SET ${sets.join(", ")} WHERE id = ?`, ...vals
+          );
+        } catch (retryE: any) {
+          throw retryE;
+        }
+      } else {
+        throw e;
+      }
+    }
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

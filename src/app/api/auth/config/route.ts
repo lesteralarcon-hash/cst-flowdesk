@@ -65,6 +65,7 @@ export async function GET() {
       `ALTER TABLE ClientProfile ADD COLUMN engagementStatus TEXT DEFAULT "confirmed"`,
       `ALTER TABLE ClientProfile ADD COLUMN primaryContact TEXT`,
       `ALTER TABLE ClientProfile ADD COLUMN primaryContactEmail TEXT`,
+      `ALTER TABLE App ADD COLUMN provider TEXT`,
       `CREATE TABLE IF NOT EXISTS SavedWork (id TEXT PRIMARY KEY, userId TEXT, appType TEXT, title TEXT, data TEXT, clientProfileId TEXT, flowCategory TEXT, status TEXT, createdAt TEXT, updatedAt TEXT)`,
       `CREATE TABLE IF NOT EXISTS GlobalSetting (id TEXT PRIMARY KEY, [key] TEXT UNIQUE, value TEXT)`,
       `CREATE TABLE IF NOT EXISTS Role (id TEXT PRIMARY KEY, name TEXT UNIQUE, createdAt TEXT)`,
