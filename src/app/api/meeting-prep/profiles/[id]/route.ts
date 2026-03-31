@@ -29,22 +29,35 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       specialConsiderations,
     } = body;
 
-    const updated = await prisma.clientProfile.update({
-      where: { id: params.id },
-      data: {
-        ...(companyName !== undefined && { companyName }),
-        ...(industry !== undefined && { industry }),
-        ...(modulesAvailed !== undefined && { modulesAvailed: JSON.stringify(modulesAvailed) }),
-        ...(engagementStatus !== undefined && { engagementStatus }),
-        ...(primaryContact !== undefined && { primaryContact }),
-        ...(primaryContactEmail !== undefined && { primaryContactEmail }),
-        ...(specialConsiderations !== undefined && { specialConsiderations }),
-      },
-    });
+    const setClauses: string[] = [];
+    const values: any[] = [];
 
-    return NextResponse.json(updated);
+    if (companyName !== undefined) { setClauses.push("companyName = ?"); values.push(companyName); }
+    if (industry !== undefined) { setClauses.push("industry = ?"); values.push(industry); }
+    if (modulesAvailed !== undefined) { setClauses.push("modulesAvailed = ?"); values.push(JSON.stringify(modulesAvailed)); }
+    if (engagementStatus !== undefined) { setClauses.push("engagementStatus = ?"); values.push(engagementStatus); }
+    if (primaryContact !== undefined) { setClauses.push("primaryContact = ?"); values.push(primaryContact); }
+    if (primaryContactEmail !== undefined) { setClauses.push("primaryContactEmail = ?"); values.push(primaryContactEmail); }
+    if (specialConsiderations !== undefined) { setClauses.push("specialConsiderations = ?"); values.push(specialConsiderations); }
+
+    if (setClauses.length > 0) {
+      setClauses.push("updatedAt = ?");
+      values.push(new Date().toISOString());
+      
+      values.push(params.id);
+      await prisma.$executeRawUnsafe(
+        `UPDATE ClientProfile SET ${setClauses.join(", ")} WHERE id = ?`,
+        ...values
+      );
+    }
+
+    const updated = await prisma.clientProfile.findUnique({ where: { id: params.id } });
+    return NextResponse.json({
+      ...updated,
+      modulesAvailed: JSON.parse((updated as any)?.modulesAvailed || "[]"),
+    });
   } catch (error: any) {
-    console.error("Update profile error:", error);
+    console.error("PATCH /api/meeting-prep/profiles/[id] error:", error);
     return NextResponse.json({ error: error.message || "Failed to update profile" }, { status: 500 });
   }
 }

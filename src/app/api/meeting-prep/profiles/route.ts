@@ -86,25 +86,29 @@ export async function POST(req: Request) {
       );
     }
 
-    const profile = await prisma.clientProfile.create({
-      data: {
-        userId: session.user.id,
-        companyName,
-        industry: industry || "general",
-        modulesAvailed: JSON.stringify(modulesAvailed || []),
-        engagementStatus: engagementStatus || "confirmed",
-        primaryContact: primaryContact || "",
-        primaryContactEmail: primaryContactEmail || "",
-        specialConsiderations: specialConsiderations || "",
-      },
-    });
+    const id = `cp_${Date.now()}`;
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO ClientProfile (id, userId, companyName, industry, modulesAvailed, engagementStatus, primaryContact, primaryContactEmail, specialConsiderations, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      session.user.id,
+      companyName,
+      industry || "general",
+      JSON.stringify(modulesAvailed || []),
+      engagementStatus || "confirmed",
+      primaryContact || "",
+      primaryContactEmail || "",
+      specialConsiderations || "",
+      new Date().toISOString(),
+      new Date().toISOString()
+    );
 
-    const formatted = {
+    const profile = await prisma.clientProfile.findUnique({ where: { id } });
+
+    return NextResponse.json({
       ...profile,
-      modulesAvailed: JSON.parse(profile.modulesAvailed || "[]"),
-    };
-
-    return NextResponse.json(formatted, { status: 201 });
+      modulesAvailed: JSON.parse((profile as any).modulesAvailed || "[]"),
+    }, { status: 201 });
   } catch (error: any) {
     console.error("POST /api/meeting-prep/profiles error:", error);
     return NextResponse.json(
