@@ -50,18 +50,47 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
     async signIn({ user, account }) {
       const email = user.email?.toLowerCase().trim();
-      const isAdmin = email && ADMIN_EMAILS.includes(email);
+      if (!email) return false;
+
+      const isAdmin = ADMIN_EMAILS.includes(email);
       
-      if (account?.provider === "google" && email) {
+      if (account?.provider === "google") {
         try {
-          await prisma.user.upsert({
-            where: { email },
-            update: { role: isAdmin ? "admin" : undefined, name: user.name },
-            create: { id: user.id || `user_${Date.now()}`, name: user.name, email, role: isAdmin ? "admin" : "user" }
-          });
+          // 1. MASTER ADMIN BINDING: Always allow whitelisted masters
+          if (isAdmin) {
+            await prisma.user.upsert({
+              where: { email },
+              update: { role: "admin", name: user.name || "Master Admin", status: "approved" },
+              create: { id: email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`, name: user.name || "Master Admin", email, role: "admin", status: "approved" }
+            });
+            return true;
+          }
+
+          // 2. DOMAIN SECURITY LOCKDOWN: mobileoptima.com, tarkie.com, olern.ph, cst.com
+          const isFromAllowedDomain = ALLOWED_DOMAINS.some(domain => email.endsWith(`@${domain}`));
+          
+          if (isFromAllowedDomain) {
+            // Check if user is ALREADY in the database (pre-registered by Admin)
+            const dbUser = await prisma.user.findUnique({
+              where: { email }
+            });
+
+            if (dbUser) {
+              // If they exist but were blocked/pending, stick to their status
+              return dbUser.status === "approved";
+            }
+
+            // DENY: User is from a domain but NOT pre-registered in the DB
+            console.warn(`Blocking unregistered access attempt from: ${email}`);
+            return false;
+          }
+
+          // 3. OTHERS: Deny all other domains
+          return false;
         } catch (err) {
-          console.error("Auth: signIn DB error (likely table missing):", err);
-          // Fail-safe: allow sign-in even if DB fails so user can visit diagnostic config
+          console.error("Auth: signIn DB error:", err);
+          // If DB is down, only allow Master Admins to enter to fix it
+          return isAdmin;
         }
       }
       return true;

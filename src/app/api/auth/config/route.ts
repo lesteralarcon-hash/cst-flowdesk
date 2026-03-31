@@ -55,6 +55,12 @@ export async function GET() {
       `ALTER TABLE User ADD COLUMN canAccessMeetings INTEGER DEFAULT 0`,
       `ALTER TABLE User ADD COLUMN canAccessAccounts INTEGER DEFAULT 0`,
       `ALTER TABLE User ADD COLUMN canAccessSolutions INTEGER DEFAULT 0`,
+      `ALTER TABLE User ADD COLUMN inviteToken TEXT`,
+      `ALTER TABLE User ADD COLUMN invitedBy TEXT`,
+      `ALTER TABLE User ADD COLUMN invitedAt TEXT`,
+      `ALTER TABLE ClientProfile ADD COLUMN specialConsiderations TEXT`,
+      `ALTER TABLE ClientProfile ADD COLUMN modulesAvailed TEXT DEFAULT "[]"`,
+      `ALTER TABLE ClientProfile ADD COLUMN engagementStatus TEXT DEFAULT "confirmed"`,
       `CREATE TABLE IF NOT EXISTS SavedWork (id TEXT PRIMARY KEY, userId TEXT, appType TEXT, title TEXT, data TEXT, clientProfileId TEXT, flowCategory TEXT, status TEXT, createdAt TEXT, updatedAt TEXT)`,
       `CREATE TABLE IF NOT EXISTS GlobalSetting (id TEXT PRIMARY KEY, [key] TEXT UNIQUE, value TEXT)`,
       `CREATE TABLE IF NOT EXISTS Role (id TEXT PRIMARY KEY, name TEXT UNIQUE, createdAt TEXT)`,
@@ -72,12 +78,12 @@ export async function GET() {
     // 3. SEEDING: Ensure the App registry is populated (Overhauled)
     try {
       const apps = [
-        { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", isActive: 1, sortOrder: 0 },
-        { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", isActive: 1, sortOrder: 1 },
-        { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", isActive: 1, sortOrder: 2 },
-        { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", isActive: 1, sortOrder: 3 },
-        { name: "Daily Tasks", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", isActive: 1, sortOrder: 4 },
-        { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", isActive: 1, sortOrder: 5 },
+        { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", isActive: true, sortOrder: 0 },
+        { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", isActive: true, sortOrder: 1 },
+        { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", isActive: true, sortOrder: 2 },
+        { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", isActive: true, sortOrder: 3 },
+        { name: "Daily Tasks", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", isActive: true, sortOrder: 4 },
+        { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", isActive: true, sortOrder: 5 },
       ];
       for (const app of apps) {
         await prisma.app.upsert({

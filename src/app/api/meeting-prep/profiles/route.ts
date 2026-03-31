@@ -93,9 +93,9 @@ export async function POST(req: Request) {
         industry: industry || "general",
         modulesAvailed: JSON.stringify(modulesAvailed || []),
         engagementStatus: engagementStatus || "confirmed",
-        primaryContact,
-        primaryContactEmail,
-        specialConsiderations,
+        primaryContact: primaryContact || "",
+        primaryContactEmail: primaryContactEmail || "",
+        specialConsiderations: specialConsiderations || "",
       },
     });
 
@@ -106,9 +106,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json(formatted, { status: 201 });
   } catch (error: any) {
-    console.error("Create profile error:", error);
+    console.error("POST /api/meeting-prep/profiles error:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to create profile" },
+      { error: error.message || "Failed to create profile. Please run /api/auth/config to repair the database schema." },
       { status: 500 }
     );
   }

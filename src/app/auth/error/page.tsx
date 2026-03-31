@@ -23,7 +23,7 @@ function ErrorContent() {
 
   const errorMessages: Record<string, string> = {
     Configuration: "The server is missing a required configuration (check Google Client ID/Secret).",
-    AccessDenied: "You do not have permission to access this application.",
+    AccessDenied: "You do not have permission to access this application. Please contact an Administrator to register your account.",
     Verification: "The verification link has expired or has already been used.",
     Default: "An unexpected authentication error occurred.",
   };

@@ -43,66 +43,76 @@ export async function GET() {
 
 /* ─── POST /api/users ─── create & invite user (admin only) ─── */
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const role = (session.user as any).role;
-  if (role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  try {
+    const session = await auth();
+    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const role = (session.user as any).role;
+    if (role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const body = await req.json();
-  const { name, email, sendEmail = true } = body;
+    const body = await req.json();
+    const { name, email, sendEmail = true } = body;
 
-  if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
 
-  // Check for existing user
-  const existing = await prisma.$queryRawUnsafe<any[]>(
-    `SELECT id FROM User WHERE email = ?`, email.toLowerCase().trim()
-  );
-  if (existing.length > 0) {
-    return NextResponse.json({ error: "A user with this email already exists" }, { status: 409 });
-  }
-
-  const id = `usr_${randomBytes(8).toString("hex")}`;
-  const inviteToken = randomBytes(32).toString("hex");
-  const now = new Date().toISOString();
-
-  await prisma.$executeRawUnsafe(
-    `INSERT INTO User (id, name, email, role, status, isSuperAdmin,
-      canAccessArchitect, canAccessBRD, canAccessTimeline,
-      canAccessTasks, canAccessCalendar, canAccessMeetings, canAccessAccounts, canAccessSolutions,
-      inviteToken, invitedBy, invitedAt)
-     VALUES (?, ?, ?, 'user', 'pending', 0,
-      0, 0, 0,
-      1, 1, 0, 0, 0,
-      ?, ?, ?)`,
-    id,
-    name || email.split("@")[0],
-    email.toLowerCase().trim(),
-    inviteToken,
-    session.user.id,
-    now
-  );
-
-  // Send invite email
-  let emailSent = false;
-  let emailError: string | null = null;
-  if (sendEmail) {
-    try {
-      const inviterName = session.user.name || session.user.email || "A team admin";
-      await sendInviteEmail({
-        to: email,
-        inviteeName: name || "",
-        invitedByName: inviterName,
-        inviteToken,
-      });
-      emailSent = true;
-    } catch (e: any) {
-      emailError = e.message;
+    // Check for existing user
+    const existing = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id FROM User WHERE email = ?`, email.toLowerCase().trim()
+    );
+    if (existing.length > 0) {
+      return NextResponse.json({ error: "A user with this email already exists" }, { status: 409 });
     }
+
+    const id = `usr_${randomBytes(8).toString("hex")}`;
+    const inviteToken = randomBytes(32).toString("hex");
+    const now = new Date().toISOString();
+
+    // STABILITY: Explicitly include all available columns to match Phase 2 Migrator
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO User (id, name, email, role, status, isSuperAdmin,
+        canAccessArchitect, canAccessBRD, canAccessTimeline,
+        canAccessTasks, canAccessCalendar, canAccessMeetings, canAccessAccounts, canAccessSolutions,
+        inviteToken, invitedBy, invitedAt)
+       VALUES (?, ?, ?, 'user', 'approved', 0,
+        0, 0, 0,
+        1, 1, 0, 0, 0,
+        ?, ?, ?)`,
+      id,
+      name || email.split("@")[0],
+      email.toLowerCase().trim(),
+      inviteToken,
+      session.user.id,
+      now
+    );
+
+    // Send invite email
+    let emailSent = false;
+    let emailError: string | null = null;
+    if (sendEmail) {
+      try {
+        const inviterName = session.user.name || session.user.email || "A team admin";
+        await sendInviteEmail({
+          to: email,
+          inviteeName: name || "",
+          invitedByName: inviterName,
+          inviteToken,
+        });
+        emailSent = true;
+      } catch (e: any) {
+        console.error("Invite email failed:", e);
+        emailError = e.message;
+      }
+    }
+
+    const user = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, name, email, role, status, inviteToken, invitedAt FROM User WHERE id = ?`, id
+    );
+
+    return NextResponse.json({ user: user[0], emailSent, emailError }, { status: 201 });
+  } catch (error: any) {
+    console.error("POST /api/users error:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to invite user. Please ensure database is fully repaired via /api/auth/config" },
+      { status: 500 }
+    );
   }
-
-  const user = await prisma.$queryRawUnsafe<any[]>(
-    `SELECT id, name, email, role, status, inviteToken, invitedAt FROM User WHERE id = ?`, id
-  );
-
-  return NextResponse.json({ user: user[0], emailSent, emailError }, { status: 201 });
 }
