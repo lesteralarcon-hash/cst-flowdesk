@@ -56,16 +56,26 @@ export async function GET() {
       { table: "User", column: "isSuperAdmin", type: "INTEGER DEFAULT 0" },
       { table: "App", column: "provider", type: "TEXT" },
       { table: "App", column: "isActive", type: "INTEGER DEFAULT 1" },
+      { table: "Project", column: "externalContact", type: "TEXT" },
+      { table: "Project", column: "internalInCharge", type: "TEXT" },
+      { table: "Project", column: "templateId", type: "TEXT" },
+      { table: "Project", column: "clientProfileId", type: "TEXT" },
+      { table: "TimelineTemplate", column: "type", type: "TEXT DEFAULT 'project'" },
+      { table: "TimelineTemplate", column: "restDays", type: "TEXT DEFAULT 'Saturday,Sunday'" },
+      { table: "TemplateTask", column: "defaultDuration", type: "REAL DEFAULT 8" },
+      { table: "TimelineItem", column: "durationHours", type: "REAL DEFAULT 8" },
       { table: "TimelineItem", column: "archived", type: "INTEGER DEFAULT 0" },
       { table: "TimelineItem", column: "kanbanLaneId", type: "TEXT" },
-      { table: "TimelineTemplate", column: "type", type: "TEXT DEFAULT 'project'" }
+      { table: "TimelineItem", column: "recurringParentId", type: "TEXT" },
+      { table: "Skill", column: "isSystem", type: "INTEGER DEFAULT 0" },
+      { table: "Skill", column: "sortOrder", type: "INTEGER DEFAULT 0" },
     ];
 
     for (const r of repairs) {
       try {
         await db.run(sql.raw(`ALTER TABLE ${r.table} ADD COLUMN ${r.column} ${r.type}`));
-        migrations.push(`Added ${r.column} to ${r.table}`);
-      } catch (e) { /* Column already exists */ }
+        migrations.push(`Repair: Created ${r.table}.${r.column}`);
+      } catch (e) { /* Column already exists, safe to ignore */ }
     }
 
     // 3. SEEDING: Registry Cleanup (Remove redundant 'Daily Tasks') and Admin Bootstrap
