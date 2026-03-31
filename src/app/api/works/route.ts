@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { savedWorks as savedWorksTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, desc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/** 
+ * GET /api/works — fetch saved work products 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const currentUserId = session?.user?.id;
+    if (!currentUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -15,14 +22,14 @@ export async function GET(req: Request) {
     const appType = searchParams.get("appType");
     const clientProfileId = searchParams.get("clientProfileId");
 
-    const where: any = { userId: session.user.id };
-    if (appType) where.appType = appType;
-    if (clientProfileId) where.clientProfileId = clientProfileId;
+    const conditions = [eq(savedWorksTable.userId, currentUserId)];
+    if (appType) conditions.push(eq(savedWorksTable.appType, appType));
+    if (clientProfileId) conditions.push(eq(savedWorksTable.clientProfileId, clientProfileId));
 
-    const works = await prisma.savedWork.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-    });
+    const works = await db.select()
+      .from(savedWorksTable)
+      .where(and(...conditions))
+      .orderBy(desc(savedWorksTable.updatedAt));
 
     return NextResponse.json(works);
   } catch (error: any) {
@@ -31,10 +38,15 @@ export async function GET(req: Request) {
   }
 }
 
+/** 
+ * POST /api/works — save or update a work product 
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const currentUserId = session?.user?.id;
+    if (!currentUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -45,40 +57,37 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "appType, title, and data are required" }, { status: 400 });
     }
 
-    // Upsert: if id provided and record exists for this user, update it
-    if (id) {
-      const existing = await prisma.savedWork.findFirst({
-        where: { id, userId: session.user.id },
-      });
-      if (existing) {
-        const setClauses: string[] = ['"title" = ?', '"data" = ?', '"updatedAt" = ?'];
-        const values: any[] = [title, data, new Date().toISOString()];
-        if (clientProfileId !== undefined) { setClauses.push('"clientProfileId" = ?'); values.push(clientProfileId || null); }
-        if (flowCategory !== undefined) { setClauses.push('"flowCategory" = ?'); values.push(flowCategory || null); }
-        if (status !== undefined) { setClauses.push('"status" = ?'); values.push(status || 'open'); }
-        values.push(id);
-        await prisma.$executeRawUnsafe(
-          `UPDATE SavedWork SET ${setClauses.join(", ")} WHERE id = ?`,
-          ...values
-        );
-        const updated = await prisma.savedWork.findFirst({ where: { id } });
-        return NextResponse.json(updated);
-      }
-    }
-
-    const newId = `sw_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO SavedWork (id, userId, appType, title, data, clientProfileId, flowCategory, status, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      newId, session.user.id, appType, title, data,
-      clientProfileId || null, flowCategory || null, status || 'open', now, now
-    );
-    const work = await prisma.savedWork.findFirst({ where: { id: newId } });
+    const workId = id || `sw_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
 
-    return NextResponse.json(work);
+    await db.insert(savedWorksTable).values({
+      id: workId,
+      userId: currentUserId,
+      appType,
+      title,
+      data,
+      clientProfileId: clientProfileId || null,
+      flowCategory: flowCategory || null,
+      status: status || 'open',
+      createdAt: now,
+      updatedAt: now
+    })
+    .onConflictDoUpdate({
+      target: savedWorksTable.id,
+      set: {
+        title,
+        data,
+        clientProfileId: clientProfileId || null,
+        flowCategory: flowCategory || null,
+        status: status || 'open',
+        updatedAt: now
+      }
+    });
+
+    const rows = await db.select().from(savedWorksTable).where(eq(savedWorksTable.id, workId)).limit(1);
+    return NextResponse.json(rows[0]);
   } catch (error: any) {
-    console.error("Create work error:", error);
+    console.error("Save work error:", error);
     return NextResponse.json({ error: error.message || "Failed to save work" }, { status: 500 });
   }
 }

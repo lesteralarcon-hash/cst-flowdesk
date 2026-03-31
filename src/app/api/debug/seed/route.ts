@@ -1,28 +1,39 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { users as usersTable } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
+/** 
+ * GET /api/debug/seed — create a mock admin for local development 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET() {
   try {
     console.log("Web Seeding: Creating mock admin...");
     
+    const adminEmail = "admin@cst.com";
     const data = {
-        id: "mock-admin-id",
-        name: "CST Admin (Mock)",
-        email: "admin@cst.com",
-        role: "admin",
-        status: "approved",
-    } as any;
+      id: "mock-admin-id",
+      name: "CST Admin (Mock)",
+      email: adminEmail,
+      role: 'admin',
+      status: 'approved',
+      isSuperAdmin: true
+    };
 
-    const admin = await prisma.user.upsert({
-      where: { email: "admin@cst.com" },
-      update: {},
-      create: data,
-    });
+    await db.insert(usersTable)
+      .values(data)
+      .onConflictDoUpdate({
+        target: usersTable.email,
+        set: { role: 'admin', status: 'approved' }
+      });
+
+    const rows = await db.select().from(usersTable).where(eq(usersTable.email, adminEmail)).limit(1);
 
     return NextResponse.json({ 
       success: true, 
       message: "Admin seeded successfully", 
-      user: admin 
+      user: rows[0] 
     });
   } catch (error: any) {
     console.error("Web Seed Error:", error);

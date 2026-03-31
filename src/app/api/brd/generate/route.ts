@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getClaudeModel } from "@/lib/ai";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { skills as skillsTable } from "@/db/schema";
+import { eq, and, desc } from "drizzle-orm";
 import mammoth from "mammoth";
 
 interface Attachment {
@@ -17,6 +19,10 @@ CRITICAL BEHAVIOR RULE:
 - Only generate the "STEP 5 — GENERATE BRD DRAFT" once you have enough details about the Field App, Dashboard, and Manager App capabilities.
 `.trim();
 
+/** 
+ * POST /api/brd/generate 
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: Request) {
   try {
     const { prompt, messages, systemInstruction, attachments } = await req.json();
@@ -30,11 +36,13 @@ export async function POST(req: Request) {
     // Fetch the active BRD skill from the database (your "360 Ecosystem" prompt)
     let dbSkill = "";
     try {
-      const skill = await (prisma as any).skill.findFirst({
-        where: { category: "brd", isActive: true },
-        orderBy: { updatedAt: 'desc' }
-      });
-      if (skill) dbSkill = skill.content;
+      const skills = await db.select()
+        .from(skillsTable)
+        .where(and(eq(skillsTable.category, "brd"), eq(skillsTable.isActive, true)))
+        .orderBy(desc(skillsTable.updatedAt))
+        .limit(1);
+      
+      if (skills.length > 0) dbSkill = skills[0].content;
     } catch (dbErr) {
       console.error("Failed to fetch BRD skill from DB:", dbErr);
     }

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { apps as appsTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -19,25 +21,32 @@ export async function POST() {
     if (!session || (session.user as any)?.role !== "admin") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const now = new Date().toISOString();
+    
     let seeded = 0;
     for (const app of BUILT_IN_APPS) {
-      const existing = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT id FROM App WHERE slug = ?`, app.slug
-      );
+      const existing = await db.select({ id: appsTable.id })
+        .from(appsTable)
+        .where(eq(appsTable.slug, app.slug))
+        .limit(1);
+
       if (existing.length === 0) {
         const id = `app_${app.slug}_${Date.now().toString(36)}`;
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO App (id, name, slug, icon, href, isActive, isBuiltIn, sortOrder, createdAt, updatedAt)
-           VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-          id, app.name, app.slug, app.icon, app.href,
-          app.isBuiltIn ? 1 : 0, app.sortOrder, now, now
-        );
+        await db.insert(appsTable).values({
+          id,
+          name: app.name,
+          slug: app.slug,
+          icon: app.icon,
+          href: app.href,
+          isActive: true,
+          isBuiltIn: app.isBuiltIn,
+          sortOrder: app.sortOrder,
+        });
         seeded++;
       }
     }
     return NextResponse.json({ ok: true, seeded });
   } catch (error: any) {
+    console.error("Seed apps error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

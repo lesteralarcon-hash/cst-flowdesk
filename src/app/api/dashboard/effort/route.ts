@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { 
+  projects as projectsTable, 
+  timelineItems as timelineItemsTable, 
+  dailyTasks as dailyTasksTable, 
+  kanbanBoards as kanbanBoardsTable, 
+  kanbanLanes as kanbanLanesTable 
+} from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, inArray, lte, gte, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -46,20 +54,29 @@ function actualHours(task: any): number {
   return 0;
 }
 
+/**
+ * GET /api/dashboard/effort
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = session?.user?.id;
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
     const period = searchParams.get("period") || "month";
     const { start, end, label } = periodRange(period);
 
     // Active projects for this user
-    const projects = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, name, companyName FROM Project WHERE status = 'active' AND userId = ? ORDER BY name ASC`,
-      session.user.id
-    );
+    const projects = await db.select({
+      id: projectsTable.id,
+      name: projectsTable.name,
+      companyName: projectsTable.companyName,
+    })
+    .from(projectsTable)
+    .where(and(eq(projectsTable.status, "active"), eq(projectsTable.userId, userId)))
+    .orderBy(projectsTable.name);
 
     if (!projects.length) {
       return NextResponse.json({
@@ -70,64 +87,78 @@ export async function GET(req: Request) {
     }
 
     const projectIds = projects.map((p: any) => p.id);
-    const ph = projectIds.map(() => "?").join(",");
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
 
     // Tasks overlapping with the period (not archived, not recurring templates)
-    const tasks = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, projectId, status, owner, durationHours, actualStart, actualEnd, plannedStart, plannedEnd, kanbanLaneId
-       FROM TimelineItem
-       WHERE projectId IN (${ph})
-         AND archived = 0
-         AND isRecurringTemplate = 0
-         AND plannedStart IS NOT NULL
-         AND plannedEnd IS NOT NULL
-         AND plannedStart <= ?
-         AND plannedEnd >= ?`,
-      ...projectIds, end.toISOString(), start.toISOString()
-    );
+    const tasks = await db.select({
+      id: timelineItemsTable.id,
+      projectId: timelineItemsTable.projectId,
+      status: timelineItemsTable.status,
+      owner: timelineItemsTable.owner,
+      durationHours: timelineItemsTable.durationHours,
+      actualStart: timelineItemsTable.actualStart,
+      actualEnd: timelineItemsTable.actualEnd,
+      plannedStart: timelineItemsTable.plannedStart,
+      plannedEnd: timelineItemsTable.plannedEnd,
+      kanbanLaneId: timelineItemsTable.kanbanLaneId,
+    })
+    .from(timelineItemsTable)
+    .where(and(
+      inArray(timelineItemsTable.projectId, projectIds),
+      eq(timelineItemsTable.archived, false),
+      eq(timelineItemsTable.isRecurringTemplate, false),
+      sql`${timelineItemsTable.plannedStart} <= ${endISO}`,
+      sql`${timelineItemsTable.plannedEnd} >= ${startISO}`
+    ));
 
     // DailyTask allotted/actual hours for tasks in this period
     const taskIds = tasks.map((t: any) => t.id);
-    let dailyTaskTotals: any[] = [];
-    if (taskIds.length) {
-      const tph = taskIds.map(() => "?").join(",");
-      dailyTaskTotals = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT timelineItemId,
-                SUM(allottedHours) as totalAllotted,
-                SUM(COALESCE(actualHours, 0)) as totalActual
-         FROM DailyTask
-         WHERE timelineItemId IN (${tph})
-           AND date >= ?
-           AND date <= ?
-         GROUP BY timelineItemId`,
-        ...taskIds, start.toISOString(), end.toISOString()
-      );
-    }
     const allottedByTask = new Map<string, { allotted: number; actual: number }>();
-    for (const r of dailyTaskTotals) {
-      allottedByTask.set(r.timelineItemId, {
-        allotted: r.totalAllotted ?? 0,
-        actual: r.totalActual ?? 0,
+    
+    if (taskIds.length > 0) {
+      const dailyTotals = await db.select({
+        timelineItemId: dailyTasksTable.timelineItemId,
+        totalAllotted: sql<number>`SUM(${dailyTasksTable.allottedHours})`,
+        totalActual: sql<number>`SUM(COALESCE(${dailyTasksTable.actualHours}, 0))`
+      })
+      .from(dailyTasksTable)
+      .where(and(
+        inArray(dailyTasksTable.timelineItemId, taskIds),
+        sql`${dailyTasksTable.date} >= ${startISO}`,
+        sql`${dailyTasksTable.date} <= ${endISO}`
+      ))
+      .groupBy(dailyTasksTable.timelineItemId);
+
+      dailyTotals.forEach((r: any) => {
+        allottedByTask.set(r.timelineItemId!, {
+          allotted: Number(r.totalAllotted) || 0,
+          actual: Number(r.totalActual) || 0,
+        });
       });
     }
 
     // Kanban boards + lanes for all active projects
-    const boards = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, projectId FROM KanbanBoard WHERE projectId IN (${ph})`,
-      ...projectIds
-    );
+    const boards = await db.select({ id: kanbanBoardsTable.id, projectId: kanbanBoardsTable.projectId })
+      .from(kanbanBoardsTable)
+      .where(inArray(kanbanBoardsTable.projectId, projectIds));
 
+    const boardIds = boards.map((b: any) => b.id);
     let lanes: any[] = [];
-    if (boards.length) {
-      const boardIds = boards.map((b: any) => b.id);
-      const lph = boardIds.map(() => "?").join(",");
-      lanes = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT id, boardId, name, mappedStatus, color, position FROM KanbanLane WHERE boardId IN (${lph}) ORDER BY position ASC`,
-        ...boardIds
-      );
+    if (boardIds.length > 0) {
+      lanes = await db.select({
+        id: kanbanLanesTable.id,
+        boardId: kanbanLanesTable.boardId,
+        name: kanbanLanesTable.name,
+        mappedStatus: kanbanLanesTable.mappedStatus,
+        color: kanbanLanesTable.color,
+        position: kanbanLanesTable.position,
+      })
+      .from(kanbanLanesTable)
+      .where(inArray(kanbanLanesTable.boardId, boardIds))
+      .orderBy(kanbanLanesTable.position);
     }
 
-    // Map projectId → lanes
     const lanesByProject = new Map<string, any[]>();
     boards.forEach((b: any) => {
       lanesByProject.set(b.projectId, lanes.filter(l => l.boardId === b.id));

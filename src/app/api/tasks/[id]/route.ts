@@ -1,19 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { taskHistory as taskHistoryTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, desc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/tasks/[id] — fetch single task with history
+/** 
+ * GET /api/tasks/[id] — fetch single task with history 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const history = await prisma.taskHistory.findMany({
-      where: { timelineItemId: params.id },
-      orderBy: { createdAt: "desc" },
-    });
+    const history = await db.select()
+      .from(taskHistoryTable)
+      .where(eq(taskHistoryTable.timelineItemId, params.id))
+      .orderBy(desc(taskHistoryTable.createdAt));
 
     return NextResponse.json(history);
   } catch (error: any) {

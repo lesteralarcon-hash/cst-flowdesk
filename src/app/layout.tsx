@@ -7,11 +7,17 @@ import { ToastProvider } from "@/components/ui/ToastContext";
 const inter = Inter({ subsets: ["latin"] });
 
 export async function generateMetadata(): Promise<Metadata> {
-  const { prisma } = await import("@/lib/prisma");
+  const { db } = await import("@/db");
+  const { globalSettings } = await import("@/db/schema");
+  const { eq } = await import("drizzle-orm");
+  
   let appName = "Tarkie CST FlowDesk";
   try {
-    const setting = await (prisma as any).globalSetting.findUnique({ where: { key: "app_name" } });
-    if (setting?.value) appName = setting.value;
+    const rows = await db.select({ value: globalSettings.value })
+      .from(globalSettings)
+      .where(eq(globalSettings.key, "app_name"))
+      .limit(1);
+    if (rows[0]?.value) appName = rows[0].value;
   } catch {}
 
   return {

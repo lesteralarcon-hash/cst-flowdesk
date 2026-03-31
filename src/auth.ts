@@ -1,8 +1,9 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
-
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { users as usersTable } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 // STABILITY v10: STABLE ADMIN & DOMAIN CONFIG
 const ALLOWED_DOMAINS = ["mobileoptima.com", "tarkie.com", "olern.ph", "cst.com"];
@@ -21,13 +22,18 @@ const credentialsProvider = Credentials({
 
     if (ADMIN_EMAILS.includes(email)) {
       if (password === "admin" || password === "cst2025" || (devPassword && password === devPassword)) {
-        // SELF-HEALING: Ensure the admin exists in the DB so other APIs don't crash
-        const user = await prisma.user.upsert({
-          where: { email },
-          update: { role: "admin", name: "Admin" },
-          create: { id: email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`, name: "Admin", email, role: "admin" }
-        });
-        return user as any;
+        // SELF-HEALING: Ensure the admin exists in the DB
+        const id = email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`;
+        
+        await db.insert(usersTable)
+          .values({ id, email, name: "Admin", role: "admin", status: "approved" })
+          .onConflictDoUpdate({
+            target: usersTable.email,
+            set: { role: "admin", name: "Admin", status: "approved" }
+          });
+          
+        const results = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
+        return results[0] as any;
       }
     }
     return null;
@@ -58,38 +64,34 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         try {
           // 1. MASTER ADMIN BINDING: Always allow whitelisted masters
           if (isAdmin) {
-            await prisma.user.upsert({
-              where: { email },
-              update: { role: "admin", name: user.name || "Master Admin", status: "approved" },
-              create: { id: email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`, name: user.name || "Master Admin", email, role: "admin", status: "approved" }
-            });
+            const id = email === "admin@cst.com" ? "admin-master" : `user_${Date.now()}`;
+            await db.insert(usersTable)
+              .values({ id, email, name: user.name || "Master Admin", role: "admin", status: "approved" })
+              .onConflictDoUpdate({
+                target: usersTable.email,
+                set: { role: "admin", name: user.name || "Master Admin", status: "approved" }
+              });
             return true;
           }
 
-          // 2. DOMAIN SECURITY LOCKDOWN: mobileoptima.com, tarkie.com, olern.ph, cst.com
+          // 2. DOMAIN SECURITY LOCKDOWN
           const isFromAllowedDomain = ALLOWED_DOMAINS.some(domain => email.endsWith(`@${domain}`));
           
           if (isFromAllowedDomain) {
-            // Check if user is ALREADY in the database (pre-registered by Admin)
-            const dbUser = await prisma.user.findUnique({
-              where: { email }
-            });
+            const results = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
+            const dbUser = results[0];
 
             if (dbUser) {
-              // If they exist but were blocked/pending, stick to their status
               return dbUser.status === "approved";
             }
 
-            // DENY: User is from a domain but NOT pre-registered in the DB
             console.warn(`Blocking unregistered access attempt from: ${email}`);
             return false;
           }
 
-          // 3. OTHERS: Deny all other domains
           return false;
         } catch (err) {
           console.error("Auth: signIn DB error:", err);
-          // If DB is down, only allow Master Admins to enter to fix it
           return isAdmin;
         }
       }
@@ -105,7 +107,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       
       if (email) {
         try {
-          const dbUser = await prisma.user.findUnique({ where: { email } });
+          const results = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
+          const dbUser = results[0];
           if (dbUser) {
             token.id = dbUser.id;
             token.role = dbUser.role;

@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { 
+  tarkieMeetings as tarkieMeetingsTable, 
+  meetingAttendees as meetingAttendeesTable 
+} from "@/db/schema";
+import { eq, and, or, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/meetings/[id]/register
- * Register or confirm attendance via QR code scan
- * Public endpoint - no auth required (for on-site registration)
+ * MIGRATED TO DRIZZLE
  */
 export async function POST(
   req: Request,
@@ -34,9 +38,8 @@ export async function POST(
     }
 
     // Fetch meeting
-    const meeting = await prisma.tarkieMeeting.findUnique({
-      where: { id: id as string },
-    });
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(eq(tarkieMeetingsTable.id, id)).limit(1);
+    const meeting = meetingRows[0];
 
     if (!meeting) {
       return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
@@ -46,20 +49,23 @@ export async function POST(
 
     // ── Path A: attendeeId provided — mark a pre-registered attendee present ──
     if (attendeeId) {
-      attendee = await prisma.meetingAttendee.findFirst({
-        where: { id: attendeeId, meetingId: id as string },
-      });
+      const attendeeRows = await db.select().from(meetingAttendeesTable).where(and(eq(meetingAttendeesTable.id, attendeeId), eq(meetingAttendeesTable.meetingId, id))).limit(1);
+      attendee = attendeeRows[0];
+      
       if (!attendee) {
         return NextResponse.json({ error: "Attendee not found" }, { status: 404 });
       }
+      
       if (attendee.attendanceStatus === "confirmed" || attendee.attendanceStatus === "attended") {
         return NextResponse.json({ message: "Already registered", attendee }, { status: 200 });
       }
-      attendee = await prisma.meetingAttendee.update({
-        where: { id: attendeeId },
-        data: { attendanceStatus: "attended", consentGiven: true },
-      });
-      return NextResponse.json({ message: "Registration successful", attendee }, { status: 200 });
+      
+      await db.update(meetingAttendeesTable)
+        .set({ attendanceStatus: "attended", consentGiven: true })
+        .where(eq(meetingAttendeesTable.id, attendeeId));
+      
+      const updatedRows = await db.select().from(meetingAttendeesTable).where(eq(meetingAttendeesTable.id, attendeeId)).limit(1);
+      return NextResponse.json({ message: "Registration successful", attendee: updatedRows[0] }, { status: 200 });
     }
 
     // ── Path B: new walk-in registration ──────────────────────────────────────
@@ -68,37 +74,45 @@ export async function POST(
     }
 
     // Check if already registered by email or phone
-    if (email) {
-      attendee = await prisma.meetingAttendee.findFirst({
-        where: { meetingId: id as string, email },
-      });
-    } else if (mobileNumber) {
-      attendee = await prisma.meetingAttendee.findFirst({
-        where: { meetingId: id as string, mobileNumber },
-      });
+    const lookupConditions: any[] = [];
+    if (email) lookupConditions.push(eq(meetingAttendeesTable.email, email));
+    if (mobileNumber) lookupConditions.push(eq(meetingAttendeesTable.mobileNumber, mobileNumber));
+
+    if (lookupConditions.length > 0) {
+      const existingRows = await db.select()
+        .from(meetingAttendeesTable)
+        .where(and(eq(meetingAttendeesTable.meetingId, id), or(...lookupConditions)))
+        .limit(1);
+      attendee = existingRows[0];
     }
 
     if (attendee && attendee.registrationType === "pre-registered") {
       // Confirm pre-registered attendee matched by email/mobile
-      attendee = await prisma.meetingAttendee.update({
-        where: { id: attendee.id },
-        data: { attendanceStatus: "attended", consentGiven: true },
-      });
+      await db.update(meetingAttendeesTable)
+        .set({ attendanceStatus: "attended", consentGiven: true })
+        .where(eq(meetingAttendeesTable.id, attendee.id));
+      
+      const updatedRows = await db.select().from(meetingAttendeesTable).where(eq(meetingAttendeesTable.id, attendee.id)).limit(1);
+      attendee = updatedRows[0];
     } else if (!attendee) {
       // Create new walk-in attendee
-      attendee = await prisma.meetingAttendee.create({
-        data: {
-          meetingId: id as string,
-          fullName,
-          position,
-          companyName,
-          mobileNumber,
-          email,
-          registrationType: "qr-scan",
-          attendanceStatus: "confirmed",
-          consentGiven: true,
-        },
+      const newId = `att_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+      await db.insert(meetingAttendeesTable).values({
+        id: newId,
+        meetingId: id,
+        fullName,
+        position: position || null,
+        companyName: companyName || null,
+        mobileNumber: mobileNumber || null,
+        email: email || null,
+        registrationType: "qr-scan",
+        attendanceStatus: "confirmed",
+        consentGiven: true,
+        createdAt: new Date().toISOString()
       });
+      
+      const newRows = await db.select().from(meetingAttendeesTable).where(eq(meetingAttendeesTable.id, newId)).limit(1);
+      attendee = newRows[0];
     } else {
       // Already exists and confirmed
       return NextResponse.json(

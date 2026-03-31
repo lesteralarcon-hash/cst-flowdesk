@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { globalSettings as globalSettingsTable } from "@/db/schema";
 
 export async function GET() {
   try {
-    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
+    const settings = await db.select().from(globalSettingsTable);
     const cfg: Record<string, string> = {};
     settings.forEach(s => { cfg[s.key] = s.value; });
 
@@ -22,6 +23,7 @@ export async function GET() {
       smtpFrom: cfg.smtpFrom || "",
     });
   } catch (err) {
+    console.error("GET /api/settings error:", err);
     return NextResponse.json({
       primaryProvider: "groq",
       ollamaEndpoint: "http://localhost:11434",
@@ -44,13 +46,19 @@ export async function POST(request: Request) {
 
     for (const [key, val] of Object.entries(body)) {
       if (val !== undefined && val !== null) {
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO GlobalSetting (id, [key], value) VALUES (?, ?, ?) 
-           ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
-          `set_${key}_${Math.random().toString(36).substring(7)}`, 
-          key, 
-          String(val)
-        );
+        await db.insert(globalSettingsTable)
+          .values({
+            id: `set_${key}_${Math.random().toString(36).substring(7)}`,
+            key,
+            value: String(val),
+          })
+          .onConflictDoUpdate({
+            target: globalSettingsTable.key,
+            set: { 
+              value: String(val),
+              updatedAt: new Date().toISOString()
+            },
+          });
       }
     }
     return NextResponse.json({ success: true });

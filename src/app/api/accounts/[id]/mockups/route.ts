@@ -1,37 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { clientProfiles as clientProfilesTable, savedWorks as savedWorksTable, users as usersTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, desc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * GET /api/accounts/[id]/mockups
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const accountId = params.id;
 
-    const account = await prisma.clientProfile.findFirst({
-      where: { id: accountId, userId: session.user.id },
-    });
-    if (!account) {
+    // Verify account belongs to this user
+    const accountRows = await db.select({ id: clientProfilesTable.id })
+      .from(clientProfilesTable)
+      .where(and(eq(clientProfilesTable.id, accountId), eq(clientProfilesTable.userId, userId)))
+      .limit(1);
+      
+    if (accountRows.length === 0) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    const mockups = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT sw.id, sw.title, sw.status, sw.data, sw.createdAt, sw.updatedAt, u.name as createdByName
-       FROM SavedWork sw
-       LEFT JOIN User u ON u.id = sw.userId
-       WHERE sw.appType = 'mockup' AND sw.clientProfileId = ? AND sw.userId = ?
-       ORDER BY sw.updatedAt DESC`,
-      accountId,
-      session.user.id
-    );
+    const mockups = await db.select({
+      id: savedWorksTable.id,
+      title: savedWorksTable.title,
+      status: savedWorksTable.status,
+      data: savedWorksTable.data,
+      createdAt: savedWorksTable.createdAt,
+      updatedAt: savedWorksTable.updatedAt,
+      createdByName: usersTable.name,
+    })
+    .from(savedWorksTable)
+    .leftJoin(usersTable, eq(usersTable.id, savedWorksTable.userId))
+    .where(and(
+      eq(savedWorksTable.appType, "mockup"),
+      eq(savedWorksTable.clientProfileId, accountId),
+      eq(savedWorksTable.userId, userId)
+    ))
+    .orderBy(desc(savedWorksTable.updatedAt));
 
     return NextResponse.json(mockups);
   } catch (error: any) {
@@ -40,13 +58,18 @@ export async function GET(
   }
 }
 
+/**
+ * PATCH /api/accounts/[id]/mockups
+ * MIGRATED TO DRIZZLE
+ */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -56,16 +79,20 @@ export async function PATCH(
       return NextResponse.json({ error: "mockupId and valid status required" }, { status: 400 });
     }
 
-    await prisma.$executeRawUnsafe(
-      `UPDATE SavedWork SET status = ?, updatedAt = ? WHERE id = ? AND userId = ? AND appType = 'mockup'`,
-      status,
-      new Date().toISOString(),
-      mockupId,
-      session.user.id
-    );
+    await db.update(savedWorksTable)
+      .set({
+        status,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(and(
+        eq(savedWorksTable.id, mockupId),
+        eq(savedWorksTable.userId, userId),
+        eq(savedWorksTable.appType, "mockup")
+      ));
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {
+    console.error("PATCH /api/accounts/[id]/mockups error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

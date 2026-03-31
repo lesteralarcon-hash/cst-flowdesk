@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { db } from '@/db';
+import { 
+  tarkieMeetings as tarkieMeetingsTable, 
+  meetingTranscripts as meetingTranscriptsTable 
+} from '@/db/schema';
 import { auth } from '@/auth';
+import { eq, and } from 'drizzle-orm';
 
 /**
  * POST /api/meetings/[id]/transcribe
- *
- * Accepts already-transcribed text (from the browser's Web Speech API)
- * and appends it to the meeting's rawTranscript in the database.
- *
- * No AI processing happens here — the text is ground-truth from the
- * browser STT engine. This eliminates hallucinations that occurred
- * when the previous implementation sent base64 audio to Gemini as text.
+ * MIGRATED TO DRIZZLE
  */
 export async function POST(
   request: NextRequest,
@@ -18,7 +17,8 @@ export async function POST(
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -32,39 +32,40 @@ export async function POST(
     }
 
     // Verify meeting ownership
-    const meeting = await prisma.tarkieMeeting.findFirst({
-      where: { id: meetingId, userId: session.user.id },
-    });
-
-    if (!meeting) {
-      return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
-    }
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    if (meetingRows.length === 0) return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
 
     // Append the new chunk to whatever transcript already exists
-    const existing = await prisma.meetingTranscript.findUnique({
-      where: { meetingId },
-      select: { rawTranscript: true },
-    });
+    const existingRows = await db.select({ rawTranscript: meetingTranscriptsTable.rawTranscript })
+      .from(meetingTranscriptsTable)
+      .where(eq(meetingTranscriptsTable.meetingId, meetingId))
+      .limit(1);
 
+    const existing = existingRows[0];
     const updated = existing?.rawTranscript
       ? `${existing.rawTranscript}\n${text}`
       : text;
 
-    const stored = await prisma.meetingTranscript.upsert({
-      where: { meetingId },
-      update: {
-        rawTranscript: updated,
-        updatedAt: new Date(),
-      },
-      create: {
+    const transcriptId = existing ? undefined : `tr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+
+    await db.insert(meetingTranscriptsTable)
+      .values({
+        id: transcriptId || `temp_${Date.now()}`, // fallback if existing is null
         meetingId,
-        rawTranscript: text,
+        rawTranscript: updated,
         primaryLanguage: 'bilingual',
         hasCodeSwitching: true,
-      },
-    });
+        updatedAt: new Date().toISOString()
+      })
+      .onConflictDoUpdate({
+        target: meetingTranscriptsTable.meetingId,
+        set: {
+          rawTranscript: updated,
+          updatedAt: new Date().toISOString()
+        }
+      });
 
-    return NextResponse.json({ success: true, id: stored.id });
+    return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Transcribe save error:', error);
     return NextResponse.json(
@@ -76,7 +77,7 @@ export async function POST(
 
 /**
  * GET /api/meetings/[id]/transcribe
- * Returns the full transcript for a meeting.
+ * MIGRATED TO DRIZZLE
  */
 export async function GET(
   request: NextRequest,
@@ -84,25 +85,20 @@ export async function GET(
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const meetingId = params.id;
 
-    const meeting = await prisma.tarkieMeeting.findFirst({
-      where: { id: meetingId, userId: session.user.id },
-    });
+    // Verify ownership
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    if (meetingRows.length === 0) return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
 
-    if (!meeting) {
-      return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
-    }
+    const transcriptRows = await db.select().from(meetingTranscriptsTable).where(eq(meetingTranscriptsTable.meetingId, meetingId)).limit(1);
 
-    const transcript = await prisma.meetingTranscript.findUnique({
-      where: { meetingId },
-    });
-
-    return NextResponse.json({ transcript });
+    return NextResponse.json({ transcript: transcriptRows[0] || null });
   } catch (error) {
     console.error('Get transcript error:', error);
     return NextResponse.json(

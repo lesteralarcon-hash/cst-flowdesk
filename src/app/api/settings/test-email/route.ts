@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import nodemailer from "nodemailer";
-import fs from "fs/promises";
-import path from "path";
+import { db } from "@/db";
+import { globalSettings as globalSettingsTable } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
 
-const SETTINGS_FILE = path.join(process.cwd(), "config.json");
-
+/** 
+ * POST /api/settings/test-email 
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -17,8 +19,7 @@ export async function POST() {
   let appName = "Team OS";
 
   try {
-    const { prisma } = await import("@/lib/prisma");
-    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
+    const settings = await db.select().from(globalSettingsTable);
     settings.forEach(s => { cfg[s.key] = s.value; });
     appName = cfg.app_name || appName;
   } catch (err) {
@@ -36,7 +37,6 @@ export async function POST() {
   if (!host || !user || !pass) {
     return NextResponse.json({ error: "SMTP not configured. Fill in Host, Username, and Password." }, { status: 400 });
   }
-
 
   try {
     const transport = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });

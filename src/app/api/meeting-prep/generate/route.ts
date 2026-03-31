@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { clientProfiles as clientProfilesTable, meetingPrepSessions as meetingPrepSessionsTable, skills as skillsTable } from "@/db/schema";
 import { auth } from "@/auth";
 import { getModelForApp } from "@/lib/ai";
+import { eq, and, inArray } from "drizzle-orm";
 
 /**
  * POST /api/meeting-prep/generate
  * Generate agenda, questionnaire, and discussion guide for a client meeting
+ * MIGRATED TO DRIZZLE
  */
 export async function POST(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -24,16 +28,14 @@ export async function POST(req: Request) {
       );
     }
 
-    // Fetch client profile — raw SQL for Turso safety
-    const profileRows = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, userId, companyName, industry, modulesAvailed, engagementStatus,
-              primaryContact, specialConsiderations
-       FROM ClientProfile WHERE id = ?`,
-      clientProfileId
-    );
+    // Fetch client profile
+    const profileRows = await db.select()
+      .from(clientProfilesTable)
+      .where(eq(clientProfilesTable.id, clientProfileId))
+      .limit(1);
     const profile = profileRows[0];
 
-    if (!profile || profile.userId !== session.user.id) {
+    if (!profile || profile.userId !== userId) {
       return NextResponse.json(
         { error: "Profile not found or unauthorized" },
         { status: 404 }
@@ -47,7 +49,7 @@ export async function POST(req: Request) {
       meetingType
     );
 
-    // Generate content using Gemini
+    // Generate content using AI
     const model = await getModelForApp("meeting-prep");
 
     const prompt = buildGenerationPrompt(profile, meetingType, knowledgeBase);
@@ -58,44 +60,55 @@ export async function POST(req: Request) {
     // Parse the generated content
     const generated = parseGeneratedContent(text);
 
-    // Create or update MeetingPrepSession — raw SQL for Turso safety
-    const existingSessions = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id FROM MeetingPrepSession WHERE clientProfileId = ? AND meetingType = ? LIMIT 1`,
-      clientProfileId, meetingType
-    );
+    // Create or update MeetingPrepSession
+    const existingSessions = await db.select({ id: meetingPrepSessionsTable.id })
+      .from(meetingPrepSessionsTable)
+      .where(and(
+        eq(meetingPrepSessionsTable.clientProfileId, clientProfileId),
+        eq(meetingPrepSessionsTable.meetingType, meetingType)
+      ))
+      .limit(1);
 
     let sessionId: string;
     const now = new Date().toISOString();
 
     if (existingSessions.length === 0) {
       sessionId = `mps_${Date.now()}`;
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO MeetingPrepSession (id, userId, clientProfileId, meetingType, status,
-          agendaContent, questionnaireContent, discussionGuide, preparationChecklist, anticipatedRequirements,
-          createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?)`,
-        sessionId, session.user.id, clientProfileId, meetingType,
-        generated.agenda, generated.questionnaire, generated.discussionGuide,
-        generated.checklist, generated.anticipatedRequirements,
-        now, now
-      );
+      await db.insert(meetingPrepSessionsTable).values({
+        id: sessionId,
+        userId,
+        clientProfileId,
+        meetingType,
+        status: "ready",
+        agendaContent: generated.agenda,
+        questionnaireContent: generated.questionnaire,
+        discussionGuide: generated.discussionGuide,
+        preparationChecklist: generated.checklist,
+        anticipatedRequirements: generated.anticipatedRequirements,
+        createdAt: now,
+        updatedAt: now
+      });
     } else {
       sessionId = existingSessions[0].id;
-      await prisma.$executeRawUnsafe(
-        `UPDATE MeetingPrepSession SET status = 'ready',
-          agendaContent = ?, questionnaireContent = ?, discussionGuide = ?,
-          preparationChecklist = ?, anticipatedRequirements = ?, updatedAt = ?
-         WHERE id = ?`,
-        generated.agenda, generated.questionnaire, generated.discussionGuide,
-        generated.checklist, generated.anticipatedRequirements, now,
-        sessionId
-      );
+      await db.update(meetingPrepSessionsTable)
+        .set({
+          status: "ready",
+          agendaContent: generated.agenda,
+          questionnaireContent: generated.questionnaire,
+          discussionGuide: generated.discussionGuide,
+          preparationChecklist: generated.checklist,
+          anticipatedRequirements: generated.anticipatedRequirements,
+          updatedAt: now
+        })
+        .where(eq(meetingPrepSessionsTable.id, sessionId));
     }
 
     // Read back the record
-    const saved = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM MeetingPrepSession WHERE id = ?`, sessionId
-    );
+    const saved = await db.select()
+      .from(meetingPrepSessionsTable)
+      .where(eq(meetingPrepSessionsTable.id, sessionId))
+      .limit(1);
+      
     return NextResponse.json(saved[0] || { id: sessionId });
   } catch (error: any) {
     console.error("Generate prep error:", error);
@@ -108,7 +121,7 @@ export async function POST(req: Request) {
 
 /**
  * Load relevant knowledge base from the Skill DB table.
- * Falls back gracefully if no skill found for a given slug.
+ * MIGRATED TO DRIZZLE
  */
 async function loadKnowledgeBase(
   industry: string,
@@ -118,33 +131,61 @@ async function loadKnowledgeBase(
   let content = "";
 
   // Load industry skill (try exact match, then "general")
-  const industrySkill = await prisma.skill.findFirst({
-    where: { category: "meeting-prep", subcategory: "industry", slug: industry, isActive: true },
-  }) ?? await prisma.skill.findFirst({
-    where: { category: "meeting-prep", subcategory: "industry", slug: "general", isActive: true },
-  });
+  const industrySkillRows = await db.select()
+    .from(skillsTable)
+    .where(and(
+      eq(skillsTable.category, "meeting-prep"),
+      eq(skillsTable.subcategory, "industry"),
+      eq(skillsTable.slug, industry),
+      eq(skillsTable.isActive, true)
+    ))
+    .limit(1);
+    
+  let industrySkill = industrySkillRows[0];
+  
+  if (!industrySkill) {
+    const generalSkillRows = await db.select()
+      .from(skillsTable)
+      .where(and(
+        eq(skillsTable.category, "meeting-prep"),
+        eq(skillsTable.subcategory, "industry"),
+        eq(skillsTable.slug, "general"),
+        eq(skillsTable.isActive, true)
+      ))
+      .limit(1);
+    industrySkill = generalSkillRows[0];
+  }
+  
   if (industrySkill) {
     content += `## Industry Context: ${industry}\n${industrySkill.content}\n\n`;
   }
 
   // Load meeting-type skill
-  const meetingTypeSkill = await prisma.skill.findFirst({
-    where: { category: "meeting-prep", subcategory: "meeting-type", slug: meetingType, isActive: true },
-  });
-  if (meetingTypeSkill) {
-    content += `## Meeting Type Guide: ${meetingType}\n${meetingTypeSkill.content}\n\n`;
+  const meetingTypeSkillRows = await db.select()
+    .from(skillsTable)
+    .where(and(
+      eq(skillsTable.category, "meeting-prep"),
+      eq(skillsTable.subcategory, "meeting-type"),
+      eq(skillsTable.slug, meetingType),
+      eq(skillsTable.isActive, true)
+    ))
+    .limit(1);
+    
+  if (meetingTypeSkillRows[0]) {
+    content += `## Meeting Type Guide: ${meetingType}\n${meetingTypeSkillRows[0].content}\n\n`;
   }
 
   // Load any module-specific skills that match availed modules
   if (modulesAvailed.length > 0) {
-    const moduleSkills = await prisma.skill.findMany({
-      where: {
-        category: "meeting-prep",
-        subcategory: "module",
-        slug: { in: modulesAvailed },
-        isActive: true,
-      },
-    });
+    const moduleSkills = await db.select()
+      .from(skillsTable)
+      .where(and(
+        eq(skillsTable.category, "meeting-prep"),
+        eq(skillsTable.subcategory, "module"),
+        inArray(skillsTable.slug, modulesAvailed as any[]),
+        eq(skillsTable.isActive, true)
+      ));
+      
     for (const ms of moduleSkills) {
       content += `## Module: ${ms.slug}\n${ms.content}\n\n`;
     }
@@ -154,7 +195,7 @@ async function loadKnowledgeBase(
 }
 
 /**
- * Build the Gemini prompt
+ * Build the prompt
  */
 function buildGenerationPrompt(
   profile: any,
@@ -206,7 +247,6 @@ Rules:
 
 /**
  * Parse the AI response into structured content.
- * Stores arrays as JSON strings for DB storage.
  */
 function parseGeneratedContent(text: string): {
   agenda: string;

@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
+import { db } from "@/db";
+import { 
+  roles as rolesTable, 
+  skills as skillsTable 
+} from "@/db/schema";
+import { eq, sql } from "drizzle-orm";
 
 /**
  * POST /api/skills/seed
- * Seeds all system skills into the database using raw SQL (Turso-safe).
- * Idempotent — uses INSERT ... ON CONFLICT to upsert.
+ * MIGRATED TO DRIZZLE
  */
 export async function POST() {
   try {
@@ -15,19 +19,20 @@ export async function POST() {
     }
 
     const results: string[] = [];
+    const now = new Date().toISOString();
 
     // ─── Seed Roles ───────────────────────────────────────────
     const STANDARD_ROLES = [
       "Project Manager", "Business Analyst", "Developer",
       "Quality Assurance", "Client", "Stakeholder", "Facilitator"
     ];
+    
     for (const roleName of STANDARD_ROLES) {
       try {
         const roleId = `role-${roleName.toLowerCase().replace(/\s+/g, "-")}`;
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO Role (id, name) VALUES (?, ?) ON CONFLICT(name) DO NOTHING`,
-          roleId, roleName
-        );
+        await db.insert(rolesTable)
+          .values({ id: roleId, name: roleName })
+          .onConflictDoNothing();
         results.push(`role: ${roleName}`);
       } catch (e) {
         // skip if exists
@@ -37,20 +42,29 @@ export async function POST() {
     // ─── Seed Skills ──────────────────────────────────────────
     for (const skill of INITIAL_SKILLS) {
       try {
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO Skill (id, name, description, category, subcategory, slug, content, isActive, isSystem, sortOrder, createdAt, updatedAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-           ON CONFLICT(id) DO UPDATE SET
-             content = excluded.content,
-             name = excluded.name,
-             description = excluded.description,
-             isSystem = excluded.isSystem,
-             updatedAt = datetime('now')`,
-          skill.id, skill.name, skill.description,
-          skill.category, skill.subcategory, skill.slug,
-          skill.content, skill.isActive ? 1 : 0, skill.isSystem ? 1 : 0,
-          skill.sortOrder
-        );
+        await db.insert(skillsTable)
+          .values({
+            ...skill,
+            isActive: !!skill.isActive,
+            isSystem: !!skill.isSystem,
+            createdAt: now,
+            updatedAt: now
+          })
+          .onConflictDoUpdate({
+            target: skillsTable.id,
+            set: {
+              name: skill.name,
+              description: skill.description,
+              category: skill.category,
+              subcategory: skill.subcategory,
+              slug: skill.slug,
+              content: skill.content,
+              isActive: !!skill.isActive,
+              isSystem: !!skill.isSystem,
+              sortOrder: skill.sortOrder,
+              updatedAt: now
+            }
+          });
         results.push(`skill: ${skill.name}`);
       } catch (e: any) {
         results.push(`skill error (${skill.name}): ${e.message}`);

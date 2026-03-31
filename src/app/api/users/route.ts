@@ -1,53 +1,44 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { users as usersTable } from "@/db/schema";
 import { sendInviteEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
+import { eq, asc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-/* ─── GET /api/users ─── list all users (admin only) ─── */
+/** 
+ * GET /api/users — list all users (admin only) 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET() {
   try {
     const session = await auth();
+    const currentUserRole = (session?.user as any)?.role;
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const role = (session.user as any).role;
-    if (role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (currentUserRole !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    // SAFE SELECT: Use * and handle potential missing columns in schema
-    const users = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM User ORDER BY name ASC`
-    );
+    const users = await db.select().from(usersTable).orderBy(asc(usersTable.name));
 
-    // Provide safety fallbacks for columns that might be missing in Turso
-    const sanitizedUsers = users.map(u => ({
-      ...u,
-      role: u.role || 'user',
-      status: u.status || 'approved',
-      canAccessArchitect: u.canAccessArchitect ?? 0,
-      canAccessBRD: u.canAccessBRD ?? 0,
-      canAccessTimeline: u.canAccessTimeline ?? 0,
-      canAccessTasks: u.canAccessTasks ?? 1,
-      canAccessCalendar: u.canAccessCalendar ?? 1,
-      canAccessMeetings: u.canAccessMeetings ?? 0,
-      canAccessAccounts: u.canAccessAccounts ?? 0,
-      canAccessSolutions: u.canAccessSolutions ?? 0,
-    }));
-
-    return NextResponse.json(sanitizedUsers);
+    return NextResponse.json(users);
   } catch (error: any) {
     console.error("GET /api/users error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-/* ─── POST /api/users ─── create & invite user (admin only) ─── */
+/** 
+ * POST /api/users — create & invite user (admin only) 
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const role = (session.user as any).role;
-    if (role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const currentUserId = session?.user?.id;
+    const currentUserRole = (session?.user as any)?.role;
+    if (!currentUserId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (currentUserRole !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const body = await req.json();
     const { name, email, sendEmail = true } = body;
@@ -55,10 +46,9 @@ export async function POST(req: Request) {
     if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
 
     // Check for existing user
-    const existing = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id FROM User WHERE email = ?`, email.toLowerCase().trim()
-    );
-    if (existing.length > 0) {
+    const normalizedEmail = email.toLowerCase().trim();
+    const existingRows = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.email, normalizedEmail)).limit(1);
+    if (existingRows.length > 0) {
       return NextResponse.json({ error: "A user with this email already exists" }, { status: 409 });
     }
 
@@ -66,30 +56,32 @@ export async function POST(req: Request) {
     const inviteToken = randomBytes(32).toString("hex");
     const now = new Date().toISOString();
 
-    // STABILITY: Explicitly include all available columns to match Phase 2 Migrator
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO User (id, name, email, role, status, isSuperAdmin,
-        canAccessArchitect, canAccessBRD, canAccessTimeline,
-        canAccessTasks, canAccessCalendar, canAccessMeetings, canAccessAccounts, canAccessSolutions,
-        inviteToken, invitedBy, invitedAt)
-       VALUES (?, ?, ?, 'user', 'approved', 0,
-        0, 0, 0,
-        1, 1, 0, 0, 0,
-        ?, ?, ?)`,
+    await db.insert(usersTable).values({
       id,
-      name || email.split("@")[0],
-      email.toLowerCase().trim(),
+      name: name || email.split("@")[0],
+      email: normalizedEmail,
+      role: 'user',
+      status: 'approved',
+      isSuperAdmin: false,
+      canAccessArchitect: false,
+      canAccessBRD: false,
+      canAccessTimeline: false,
+      canAccessTasks: true,
+      canAccessCalendar: true,
+      canAccessMeetings: false,
+      canAccessAccounts: false,
+      canAccessSolutions: false,
       inviteToken,
-      session.user.id,
-      now
-    );
+      invitedBy: currentUserId,
+      invitedAt: now
+    });
 
     // Send invite email
     let emailSent = false;
     let emailError: string | null = null;
     if (sendEmail) {
       try {
-        const inviterName = session.user.name || session.user.email || "A team admin";
+        const inviterName = session?.user?.name || session?.user?.email || "A team admin";
         await sendInviteEmail({
           to: email,
           inviteeName: name || "",
@@ -103,10 +95,8 @@ export async function POST(req: Request) {
       }
     }
 
-    const userRows = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM User WHERE id = ?`, id
-    );
-    const createdUser = userRows[0] || {};
+    const createdRows = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
+    const createdUser = createdRows[0] || {};
 
     return NextResponse.json({
       user: {
@@ -124,7 +114,7 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error("POST /api/users error:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to invite user. Please ensure database is fully repaired via /api/auth/config" },
+      { error: error.message || "Failed to invite user." },
       { status: 500 }
     );
   }

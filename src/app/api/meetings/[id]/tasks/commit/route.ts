@@ -1,14 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { 
+  tarkieMeetings as tarkieMeetingsTable, 
+  timelineItems as timelineItemsTable,
+  taskAssignments as taskAssignmentsTable,
+  projects as projectsTable,
+  clientProfiles as clientProfilesTable
+} from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and } from "drizzle-orm";
 
+/**
+ * POST /api/meetings/[id]/tasks/commit
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -24,61 +37,69 @@ export async function POST(
       return NextResponse.json({ error: "No tasks to commit" }, { status: 400 });
     }
 
-    const meeting = await prisma.tarkieMeeting.findUnique({
-      where: { id: meetingId },
-      include: { project: { include: { clientProfile: true } } }
-    });
+    // Fetch meeting and join project/client to get companyName for prefix
+    const meetingRows = await db.select({
+      id: tarkieMeetingsTable.id,
+      clientProfileId: tarkieMeetingsTable.clientProfileId,
+      projectTitle: projectsTable.title,
+      projectCompanyName: projectsTable.companyName,
+      clientCompanyName: clientProfilesTable.companyName,
+    })
+    .from(tarkieMeetingsTable)
+    .leftJoin(projectsTable, eq(tarkieMeetingsTable.projectId, projectsTable.id))
+    .leftJoin(clientProfilesTable, eq(tarkieMeetingsTable.clientProfileId, clientProfilesTable.id))
+    .where(eq(tarkieMeetingsTable.id, meetingId))
+    .limit(1);
 
+    const meeting = meetingRows[0];
     if (!meeting) {
       return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
     }
 
-    const companyName = meeting.project?.clientProfile?.companyName || meeting.project?.companyName || "GEN";
+    const companyName = meeting.clientCompanyName || meeting.projectCompanyName || "GEN";
     const prefix = companyName.split(" ")[0].replace(/[^a-zA-Z]/g, "").substring(0, 3).toUpperCase();
 
-    const taskCodes = [];
-    for (const task of tasks) {
-      const ps = task.plannedStart ? new Date(task.plannedStart) : new Date();
-      const pe = task.plannedEnd ? new Date(task.plannedEnd) : new Date(ps.getTime() + 3600000);
-      const diffMs = pe.getTime() - ps.getTime();
-      const durationHours = Math.max(0.25, Math.round((diffMs / 3600000) * 100) / 100);
+    const taskCodes: string[] = [];
 
-      const numericPart = Math.floor(100000 + Math.random() * 900000);
-      const taskCode = `TASK-${prefix}-${numericPart}`;
-      const taskId = `task_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+    await db.transaction(async (tx) => {
+      for (const task of tasks) {
+        const ps = task.plannedStart ? new Date(task.plannedStart) : new Date();
+        const pe = task.plannedEnd ? new Date(task.plannedEnd) : new Date(ps.getTime() + 3600000);
+        const durationHours = Math.max(0.25, Math.round(((pe.getTime() - ps.getTime()) / 3600000) * 100) / 100);
 
-      // Use standard Prisma Client create calls for better reliability
-      await prisma.timelineItem.create({
-        data: {
+        const numericPart = Math.floor(100000 + Math.random() * 900000);
+        const taskCode = `TASK-${prefix}-${numericPart}`;
+        const taskId = `task_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+
+        // Insert task
+        await tx.insert(timelineItemsTable).values({
           id: taskId,
           projectId,
           clientProfileId: meeting.clientProfileId || null,
           taskCode,
           subject: task.title || "Untitled Task",
-          plannedStart: ps,
-          plannedEnd: pe,
+          plannedStart: ps.toISOString(),
+          plannedEnd: pe.toISOString(),
           status: 'pending',
           durationHours,
           sortOrder: 0,
-          archived: false
-        }
-      });
+          archived: false,
+          createdBy: userId
+        });
 
-      // Handle multi-assignees
-      if (task.assignedIds && Array.isArray(task.assignedIds)) {
-        for (const uid of task.assignedIds) {
-          await prisma.taskAssignment.create({
-            data: {
-              id: `asgn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
-              timelineItemId: taskId,
-              userId: uid,
-            }
-          });
+        // Insert assignments
+        if (task.assignedIds && Array.isArray(task.assignedIds) && task.assignedIds.length > 0) {
+          const assignmentValues = task.assignedIds.map((uid: string) => ({
+            id: `asgn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+            timelineItemId: taskId,
+            userId: uid,
+          }));
+          await tx.insert(taskAssignmentsTable).values(assignmentValues);
         }
+
+        taskCodes.push(taskCode);
       }
-
-      taskCodes.push(taskCode);
-    }
+    });
 
     return NextResponse.json({ success: true, count: tasks.length, codes: taskCodes });
   } catch (error: any) {

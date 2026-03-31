@@ -1311,14 +1311,10 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                 {!dbAvailable ? (
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center space-y-3">
                     <Calendar className="h-12 w-12 text-amber-300 mx-auto" />
-                    <h4 className="font-bold text-amber-700">Database Not Ready</h4>
+                    <h4 className="font-bold text-amber-700">Database Connection Issue</h4>
                     <p className="text-sm text-amber-600 max-w-md mx-auto">
-                      To manage timeline templates, please run these commands in your terminal:
+                      Could not reach the database. Please ensure your <strong>DATABASE_URL</strong> is correctly configured.
                     </p>
-                    <code className="block bg-amber-100 text-amber-800 text-xs p-3 rounded-lg font-mono">
-                      npx prisma db push<br />
-                      npx prisma db seed
-                    </code>
                   </div>
                 ) : templatesLoading ? (
                   <div className="flex items-center justify-center py-12 text-muted-foreground">
@@ -1326,7 +1322,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   </div>
                 ) : templates.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground">
-                    <p>No templates yet. Click &quot;Add Template&quot; or run <code className="bg-muted px-1 rounded">npx prisma db seed</code> to load defaults.</p>
+                    <p>No templates yet. Click &quot;Add Template&quot; to get started.</p>
                   </div>
                 ) : (
                   <div className="space-y-3">

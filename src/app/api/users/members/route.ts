@@ -1,28 +1,44 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { users as usersTable, roles as rolesTable } from "@/db/schema";
+import { eq, or, asc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/users/members
- * Returns all active users + all roles for the task assignment picker.
- * Combined response so the picker only needs one fetch.
+ * Returns all approved users + all roles for selection components.
+ * MIGRATED TO DRIZZLE
  */
 export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const session = await auth();
+    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [users, roles] = await Promise.all([
-    prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, name, email, image, role FROM User
-       WHERE status = 'approved' OR status = 'active'
-       ORDER BY name ASC`
-    ),
-    prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, name FROM Role ORDER BY name ASC`
-    ),
-  ]);
+    const [users, roles] = await Promise.all([
+      db.select({
+        id: usersTable.id,
+        name: usersTable.name,
+        email: usersTable.email,
+        image: usersTable.image,
+        role: usersTable.role
+      })
+      .from(usersTable)
+      .where(or(eq(usersTable.status, 'approved'), eq(usersTable.status, 'active')))
+      .orderBy(asc(usersTable.name)),
 
-  return NextResponse.json({ users, roles });
+      db.select({
+        id: rolesTable.id,
+        name: rolesTable.name
+      })
+      .from(rolesTable)
+      .orderBy(asc(rolesTable.name))
+    ]);
+
+    return NextResponse.json({ users, roles });
+  } catch (error: any) {
+    console.error("GET /api/users/members error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }

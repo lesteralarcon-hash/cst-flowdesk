@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { skills as skillsTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, asc } from "drizzle-orm";
 
-/** GET /api/skills — list skills, optionally filtered by category */
+/** 
+ * GET /api/skills — list skills, optionally filtered 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(req: NextRequest) {
   try {
     const session = await auth();
@@ -11,21 +16,21 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const category = searchParams.get("category");
-    const subcategory = searchParams.get("subcategory");
-    const slug = searchParams.get("slug");
+    const categoryQuery = searchParams.get("category");
+    const subcategoryQuery = searchParams.get("subcategory");
+    const slugQuery = searchParams.get("slug");
     const activeOnly = searchParams.get("activeOnly") !== "false";
 
-    const where: any = {};
-    if (category) where.category = category;
-    if (subcategory) where.subcategory = subcategory;
-    if (slug) where.slug = slug;
-    if (activeOnly) where.isActive = true;
+    const conditions = [];
+    if (categoryQuery) conditions.push(eq(skillsTable.category, categoryQuery));
+    if (subcategoryQuery) conditions.push(eq(skillsTable.subcategory, subcategoryQuery));
+    if (slugQuery) conditions.push(eq(skillsTable.slug, slugQuery));
+    if (activeOnly) conditions.push(eq(skillsTable.isActive, true));
 
-    const skills = await prisma.skill.findMany({
-      where,
-      orderBy: [{ category: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
-    });
+    const skills = await db.select()
+      .from(skillsTable)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(asc(skillsTable.category), asc(skillsTable.sortOrder), asc(skillsTable.name));
 
     return NextResponse.json(skills);
   } catch (err: any) {
@@ -34,7 +39,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/** POST /api/skills — create a new skill (admin only) */
+/** 
+ * POST /api/skills — create a new skill 
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: NextRequest) {
   try {
     const session = await auth();
@@ -52,21 +60,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const skill = await prisma.skill.create({
-      data: {
-        name,
-        description: description || "",
-        category,
-        subcategory: subcategory || null,
-        slug: slug || null,
-        content,
-        isActive: isActive !== false,
-        isSystem: false,
-        sortOrder: sortOrder || 0,
-      },
+    const newId = `sk_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+
+    await db.insert(skillsTable).values({
+      id: newId,
+      name,
+      description: description || "",
+      category,
+      subcategory: subcategory || null,
+      slug: slug || null,
+      content,
+      isActive: isActive !== false,
+      isSystem: false,
+      sortOrder: sortOrder || 0,
+      createdAt: now,
+      updatedAt: now
     });
 
-    return NextResponse.json(skill, { status: 201 });
+    const rows = await db.select().from(skillsTable).where(eq(skillsTable.id, newId)).limit(1);
+    return NextResponse.json(rows[0], { status: 201 });
   } catch (err: any) {
     console.error("POST /api/skills error:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });

@@ -2,7 +2,7 @@ import nodemailer from "nodemailer";
 import fs from "fs/promises";
 import path from "path";
 
-import { prisma } from "./prisma";
+
 
 const SETTINGS_FILE = path.join(process.cwd(), "config.json");
 const APP_URL = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "https://cst-flow--cst-flowdesk.asia-east1.hosted.app";
@@ -10,8 +10,10 @@ const APP_URL = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "https://cst
 /* ─── Global Settings ────────────────────────────────────────── */
 async function getGlobalSettings() {
   try {
-    // Always use raw SQL to avoid Prisma ORM schema-mismatch on Turso
-    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
+    const { db } = await import("@/db");
+    const { globalSettings } = await import("@/db/schema");
+    
+    const settings = await db.select().from(globalSettings);
     
     const config: Record<string, string> = {};
     settings.forEach((s: any) => {
@@ -33,7 +35,9 @@ async function getGlobalSettings() {
 async function getSmtpConfig() {
   const cfg: Record<string, any> = {};
   try {
-    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
+    const { db } = await import("@/db");
+    const { globalSettings } = await import("@/db/schema");
+    const settings = await db.select().from(globalSettings);
     settings.forEach(s => { cfg[s.key] = s.value; });
   } catch (err) {
     console.warn("SMTP config read error:", err);

@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { projects as projectsTable, timelineItems as timelineItemsTable, timelineTemplates as timelineTemplatesTable } from "@/db/schema";
 import { auth } from "@/auth";
- 
+import { eq, desc } from "drizzle-orm";
+
 export const dynamic = "force-dynamic";
 
+/**
+ * POST /api/projects
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -17,29 +24,50 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    const project = await prisma.project.create({
-      data: {
-        userId: session.user.id,
+    const projectId = `proj_${Date.now()}`;
+    const nowStr = new Date().toISOString();
+
+    // Drizzle Transaction to ensure both project and its items are created
+    const project = await db.transaction(async (tx) => {
+      // 1. Create the project
+      await tx.insert(projectsTable).values({
+        id: projectId,
+        userId: userId,
         name: name,
         companyName: name,
         clientProfileId: clientProfileId || null,
-        startDate: new Date(startDate),
+        startDate: new Date(startDate).toISOString(),
         templateId: templateId || null,
         status: "active",
-        timelineItems: {
-          create: events.map((event: any, index: number) => ({
+        createdAt: nowStr,
+        updatedAt: nowStr,
+      });
+
+      // 2. Create the timeline items
+      if (events.length > 0) {
+        await tx.insert(timelineItemsTable).values(
+          events.map((event: any, index: number) => ({
+            id: `ti_${projectId}_${index}_${Math.random().toString(36).substring(7)}`,
+            projectId: projectId,
+            clientProfileId: clientProfileId || null,
             taskCode: event.taskCode,
             subject: event.subject,
-            plannedStart: new Date(event.startDate),
-            plannedEnd: new Date(event.endDate),
+            plannedStart: new Date(event.startDate).toISOString(),
+            plannedEnd: new Date(event.endDate).toISOString(),
             durationHours: event.durationHours || 8,
             owner: event.owner || null,
             description: event.description || null,
             status: "pending",
             sortOrder: index + 1,
-          })),
-        },
-      },
+            createdAt: nowStr,
+            updatedAt: nowStr,
+          }))
+        );
+      }
+
+      // Return the project summary
+      const rows = await tx.select().from(projectsTable).where(eq(projectsTable.id, projectId)).limit(1);
+      return rows[0];
     });
 
     return NextResponse.json(project);
@@ -49,21 +77,36 @@ export async function POST(req: Request) {
   }
 }
 
+/**
+ * GET /api/projects
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET() {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Use raw SQL to include templateType (Prisma client may not have type field regenerated)
-    const projects = await prisma.$queryRawUnsafe<any[]>(`
-      SELECT p.*, tt.type as templateType, tt.name as templateName
-      FROM Project p
-      LEFT JOIN TimelineTemplate tt ON p.templateId = tt.id
-      WHERE p.userId = ?
-      ORDER BY p.updatedAt DESC
-    `, session.user.id);
+    // Drizzle select with left join
+    const projects = await db.select({
+      id: projectsTable.id,
+      name: projectsTable.name,
+      companyName: projectsTable.companyName,
+      clientProfileId: projectsTable.clientProfileId,
+      startDate: projectsTable.startDate,
+      status: projectsTable.status,
+      templateId: projectsTable.templateId,
+      createdAt: projectsTable.createdAt,
+      updatedAt: projectsTable.updatedAt,
+      templateType: timelineTemplatesTable.type,
+      templateName: timelineTemplatesTable.name
+    })
+    .from(projectsTable)
+    .leftJoin(timelineTemplatesTable, eq(projectsTable.templateId, timelineTemplatesTable.id))
+    .where(eq(projectsTable.userId, userId))
+    .orderBy(desc(projectsTable.updatedAt));
 
     return NextResponse.json(projects);
   } catch (error: any) {

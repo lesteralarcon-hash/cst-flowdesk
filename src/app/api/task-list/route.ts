@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { timelineItems as timelineItemsTable, projects as projectsTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, asc, isNull } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/** 
+ * GET /api/task-list — simplified flat list of parent tasks 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(req: Request) {
   try {
     const session = await auth();
@@ -13,16 +19,39 @@ export async function GET(req: Request) {
     const projectId = searchParams.get("projectId");
     const showArchived = searchParams.get("showArchived") === "true";
 
-    // ABSOLUTE MINIMAL FRESH ROUTE
-    const tasks = await prisma.timelineItem.findMany({
-      where: (projectId && projectId !== "ALL") ? { projectId, archived: showArchived } : { archived: showArchived },
-      include: { project: { select: { name: true } } },
-      orderBy: { sortOrder: "asc" }
-    });
+    const conditions = [
+      eq(timelineItemsTable.archived, showArchived),
+      isNull(timelineItemsTable.parentId)
+    ];
+    if (projectId && projectId !== "ALL") {
+      conditions.push(eq(timelineItemsTable.projectId, projectId));
+    }
 
-    return NextResponse.json(tasks.filter(t => !t.parentId));
+    const rows = await db.select({
+      id: timelineItemsTable.id,
+      projectId: timelineItemsTable.projectId,
+      taskCode: timelineItemsTable.taskCode,
+      subject: timelineItemsTable.subject,
+      plannedStart: timelineItemsTable.plannedStart,
+      plannedEnd: timelineItemsTable.plannedEnd,
+      status: timelineItemsTable.status,
+      archived: timelineItemsTable.archived,
+      sortOrder: timelineItemsTable.sortOrder,
+      projectName: projectsTable.name
+    })
+    .from(timelineItemsTable)
+    .leftJoin(projectsTable, eq(timelineItemsTable.projectId, projectsTable.id))
+    .where(and(...conditions))
+    .orderBy(asc(timelineItemsTable.sortOrder));
+
+    const tasks = rows.map(r => ({
+      ...r,
+      project: { name: r.projectName }
+    }));
+
+    return NextResponse.json(tasks);
   } catch (err: any) {
-    console.error("Fresh Route Failure:", err);
+    console.error("Task List Error:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

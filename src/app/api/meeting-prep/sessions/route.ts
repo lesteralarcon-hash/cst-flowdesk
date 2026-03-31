@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { meetingPrepSessions as meetingPrepSessionsTable, clientProfiles as clientProfilesTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, desc, inArray, SQL } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/meeting-prep/sessions
- * PRODUCTION-SAFE: Uses raw SQL to avoid Prisma schema-mismatch on Turso
+ * MIGRATED TO DRIZZLE
  */
 export async function GET(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -21,49 +24,44 @@ export async function GET(req: Request) {
     const meetingType = url.searchParams.get("meetingType");
     const meetingPrepSessionId = url.searchParams.get("meetingPrepSessionId");
 
-    // Build dynamic WHERE clause with raw SQL
-    const conditions: string[] = ["userId = ?"];
-    const values: any[] = [session.user.id];
+    // Build dynamic WHERE clause with Drizzle
+    const conditions: SQL[] = [eq(meetingPrepSessionsTable.userId, userId)];
 
-    if (status) { conditions.push("status = ?"); values.push(status); }
-    if (clientProfileId) { conditions.push("clientProfileId = ?"); values.push(clientProfileId); }
+    if (status) {
+      conditions.push(eq(meetingPrepSessionsTable.status, status));
+    }
+    if (clientProfileId) {
+      conditions.push(eq(meetingPrepSessionsTable.clientProfileId, clientProfileId));
+    }
     if (meetingPrepSessionId) {
-      conditions.push("id = ?"); values.push(meetingPrepSessionId);
+      conditions.push(eq(meetingPrepSessionsTable.id, meetingPrepSessionId));
     } else if (meetingType) {
       if (meetingType.includes(",")) {
         const types = meetingType.split(",").map(t => t.trim());
-        const placeholders = types.map(() => "?").join(",");
-        conditions.push(`meetingType IN (${placeholders})`);
-        values.push(...types);
+        conditions.push(inArray(meetingPrepSessionsTable.meetingType, types as any[]));
       } else {
-        conditions.push("meetingType = ?");
-        values.push(meetingType);
+        conditions.push(eq(meetingPrepSessionsTable.meetingType, meetingType));
       }
     }
 
-    const whereClause = conditions.join(" AND ");
-    const sessions = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, userId, clientProfileId, meetingType, status,
-              agendaContent, questionnaireContent, discussionGuide,
-              preparationChecklist, anticipatedRequirements,
-              createdAt, updatedAt
-       FROM MeetingPrepSession
-       WHERE ${whereClause}
-       ORDER BY updatedAt DESC`,
-      ...values
-    );
+    const sessions = await db.select()
+      .from(meetingPrepSessionsTable)
+      .where(and(...conditions))
+      .orderBy(desc(meetingPrepSessionsTable.updatedAt));
 
-    // Fetch related profiles separately with raw SQL
+    // Fetch related profiles separately
     const profileIds = Array.from(new Set(sessions.map((s: any) => s.clientProfileId)));
     let profiles: any[] = [];
     if (profileIds.length > 0) {
-      const placeholders = profileIds.map(() => "?").join(",");
-      profiles = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT id, companyName, industry, engagementStatus, primaryContact
-         FROM ClientProfile
-         WHERE id IN (${placeholders})`,
-        ...profileIds
-      );
+      profiles = await db.select({
+        id: clientProfilesTable.id,
+        companyName: clientProfilesTable.companyName,
+        industry: clientProfilesTable.industry,
+        engagementStatus: clientProfilesTable.engagementStatus,
+        primaryContact: clientProfilesTable.primaryContact
+      })
+      .from(clientProfilesTable)
+      .where(inArray(clientProfilesTable.id, profileIds));
     }
     const profileMap = Object.fromEntries(profiles.map((p: any) => [p.id, p]));
 

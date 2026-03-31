@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { meetingAttendees as meetingAttendeesTable } from "@/db/schema";
+import { eq, and, or } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/meetings/[id]/attendees/lookup?email=...&mobile=...
- * Public — checks if someone is pre-registered so the QR page can greet them by name.
+ * GET /api/meetings/[id]/attendees/lookup
+ * MIGRATED TO DRIZZLE
  */
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -17,29 +19,30 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       return NextResponse.json({ attendee: null });
     }
 
-    const conditions: any[] = [];
-    if (email) conditions.push({ email });
-    if (mobile) conditions.push({ mobileNumber: mobile });
+    const orConditions: any[] = [];
+    if (email) orConditions.push(eq(meetingAttendeesTable.email, email));
+    if (mobile) orConditions.push(eq(meetingAttendeesTable.mobileNumber, mobile));
 
-    const attendee = await prisma.meetingAttendee.findFirst({
-      where: {
-        meetingId: params.id,
-        registrationType: "pre-registered",
-        OR: conditions,
-      },
-      select: {
-        id: true,
-        fullName: true,
-        position: true,
-        companyName: true,
-        email: true,
-        mobileNumber: true,
-        attendanceStatus: true,
-      },
-    });
+    const results = await db.select({
+      id: meetingAttendeesTable.id,
+      fullName: meetingAttendeesTable.fullName,
+      position: meetingAttendeesTable.position,
+      companyName: meetingAttendeesTable.companyName,
+      email: meetingAttendeesTable.email,
+      mobileNumber: meetingAttendeesTable.mobileNumber,
+      attendanceStatus: meetingAttendeesTable.attendanceStatus,
+    })
+    .from(meetingAttendeesTable)
+    .where(and(
+      eq(meetingAttendeesTable.meetingId, params.id),
+      eq(meetingAttendeesTable.registrationType, "pre-registered"),
+      or(...orConditions)
+    ))
+    .limit(1);
 
-    return NextResponse.json({ attendee });
+    return NextResponse.json({ attendee: results[0] || null });
   } catch (err: any) {
+    console.error("Attendee lookup error:", err);
     return NextResponse.json({ attendee: null });
   }
 }

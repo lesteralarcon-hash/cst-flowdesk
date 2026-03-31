@@ -1,38 +1,38 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { clientProfiles as clientProfilesTable, meetingPrepSessions as meetingPrepSessionsTable, users as usersTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, desc, inArray } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/meeting-prep/profiles
  * Fetch all client profiles for the current user
- * PRODUCTION-SAFE: Uses raw SQL to avoid Prisma schema-mismatch crashes on Turso
+ * MIGRATED TO DRIZZLE
  */
 export async function GET(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // RAW SQL: Use SELECT * to avoid crash on missing columns
-    const profiles = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM ClientProfile WHERE userId = ? ORDER BY createdAt DESC`,
-      session.user.id
-    );
+    // Drizzle: Get profiles for the current user
+    const profiles = await db.select()
+      .from(clientProfilesTable)
+      .where(eq(clientProfilesTable.userId, userId))
+      .orderBy(desc(clientProfilesTable.createdAt));
 
-    // Fetch meeting prep sessions separately (also raw SQL to be safe)
+    // Fetch meeting prep sessions separately
     const profileIds = profiles.map((p: any) => p.id);
     let sessions: any[] = [];
     if (profileIds.length > 0) {
-      const placeholders = profileIds.map(() => "?").join(",");
-      sessions = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT * FROM MeetingPrepSession
-         WHERE clientProfileId IN (${placeholders})
-         ORDER BY updatedAt DESC`,
-        ...profileIds
-      );
+      sessions = await db.select()
+        .from(meetingPrepSessionsTable)
+        .where(inArray(meetingPrepSessionsTable.clientProfileId, profileIds))
+        .orderBy(desc(meetingPrepSessionsTable.updatedAt));
     }
 
     // Merge sessions into profiles
@@ -62,12 +62,13 @@ export async function GET(req: Request) {
 /**
  * POST /api/meeting-prep/profiles
  * Create a new client profile
- * PRODUCTION-SAFE: 100% raw SQL with fallback INSERT for missing columns
+ * MIGRATED TO DRIZZLE
  */
 export async function POST(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -89,87 +90,54 @@ export async function POST(req: Request) {
       );
     }
 
-    // STABILITY: Ensure the user record exists before creating profile (prevents FK error)
+    // Ensure the user record exists before creating profile (prevents FK error)
     try {
-      const existing = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT id FROM User WHERE id = ?`, session.user.id
-      );
-      if (existing.length === 0) {
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO User (id, name, email, role, status) VALUES (?, ?, ?, ?, 'approved')`,
-          session.user.id,
-          session.user.name || "CST User",
-          session.user.email || `unknown_${Date.now()}@cst.com`,
-          (session.user as any).role || "user"
-        );
+      const existingUser = await db.select({ id: usersTable.id })
+        .from(usersTable)
+        .where(eq(usersTable.id, userId))
+        .limit(1);
+      
+      if (existingUser.length === 0) {
+        await db.insert(usersTable).values({
+          id: userId,
+          name: session.user.name || "CST User",
+          email: session.user.email || `unknown_${Date.now()}@cst.com`,
+          role: (session.user as any).role || "user",
+          status: "approved",
+        });
       }
     } catch (e) {
       console.warn("Profiles: User ensure failed (non-critical):", e);
     }
 
-    // STABILITY: Add missing columns if they don't exist yet
-    // Run silently — errors are expected if columns already exist
-    const colMigrations = [
-      `ALTER TABLE ClientProfile ADD COLUMN primaryContact TEXT`,
-      `ALTER TABLE ClientProfile ADD COLUMN primaryContactEmail TEXT`,
-      `ALTER TABLE ClientProfile ADD COLUMN companySize TEXT`,
-      `ALTER TABLE ClientProfile ADD COLUMN specialConsiderations TEXT`,
-      `ALTER TABLE ClientProfile ADD COLUMN modulesAvailed TEXT DEFAULT '[]'`,
-      `ALTER TABLE ClientProfile ADD COLUMN engagementStatus TEXT DEFAULT 'confirmed'`,
-    ];
-    for (const sql of colMigrations) {
-      try { await prisma.$executeRawUnsafe(sql); } catch { /* column already exists */ }
-    }
-
     const id = `cp_${Date.now()}`;
     const now = new Date().toISOString();
 
-    // STABILITY: Try full INSERT first; fall back to minimal INSERT if columns missing
-    let insertError: any = null;
-    try {
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO ClientProfile (id, userId, companyName, industry, modulesAvailed, engagementStatus, primaryContact, primaryContactEmail, specialConsiderations, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        id,
-        session.user.id,
-        companyName.trim(),
-        industry || "general",
-        JSON.stringify(modulesAvailed || []),
-        engagementStatus || "confirmed",
-        primaryContact || "",
-        primaryContactEmail || "",
-        specialConsiderations || "",
-        now,
-        now
-      );
-    } catch (e: any) {
-      console.warn("Full INSERT failed, trying minimal INSERT:", e.message);
-      insertError = e;
-      // Fallback: minimal INSERT with only the core required columns
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO ClientProfile (id, userId, companyName, industry, modulesAvailed, engagementStatus, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        id,
-        session.user.id,
-        companyName.trim(),
-        industry || "general",
-        JSON.stringify(modulesAvailed || []),
-        engagementStatus || "confirmed",
-        now,
-        now
-      );
-    }
+    // Drizzle: Direct insert with all fields
+    await db.insert(clientProfilesTable).values({
+      id,
+      userId,
+      companyName: companyName.trim(),
+      industry: industry || "general",
+      modulesAvailed: JSON.stringify(modulesAvailed || []),
+      engagementStatus: engagementStatus || "confirmed",
+      primaryContact: primaryContact || "",
+      primaryContactEmail: primaryContactEmail || "",
+      specialConsiderations: specialConsiderations || "",
+      createdAt: now,
+      updatedAt: now
+    });
 
-    // Read back — SELECT * for maximum safety
-    const created = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM ClientProfile WHERE id = ?`, id
-    );
+    // Read back
+    const created = await db.select()
+      .from(clientProfilesTable)
+      .where(eq(clientProfilesTable.id, id))
+      .limit(1);
 
     const profile = created[0] || {};
     return NextResponse.json({
       ...profile,
       modulesAvailed: (() => { try { return JSON.parse(profile.modulesAvailed || "[]"); } catch { return []; } })(),
-      _insertFallbackUsed: !!insertError,
     }, { status: 201 });
 
   } catch (error: any) {

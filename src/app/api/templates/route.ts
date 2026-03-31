@@ -1,29 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma as db } from "@/lib/prisma";
- 
+import { db } from "@/db";
+import { 
+  timelineTemplates as timelineTemplatesTable, 
+  templateTasks as templateTasksTable 
+} from "@/db/schema";
+import { eq, asc } from "drizzle-orm";
+
 export const dynamic = "force-dynamic";
 
-// GET /api/templates — list all templates with their tasks
+/** 
+ * GET /api/templates — list all templates with their tasks 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET() {
-  if (!db) {
-    return NextResponse.json({ error: "Database not initialized." }, { status: 503 });
-  }
-
   try {
-    // Get known fields + tasks via Prisma
-    const templates = await db.timelineTemplate.findMany({
-      include: { tasks: { orderBy: { sortOrder: "asc" } } },
-      orderBy: { createdAt: "asc" },
-    });
-    // Merge in `type` field via raw query (field added via ALTER TABLE)
-    let typeMap: Record<string, string> = {};
-    try {
-      const types = await db.$queryRawUnsafe<{id: string, type: string}[]>("SELECT id, type FROM TimelineTemplate");
-      typeMap = Object.fromEntries(types.map(t => [t.id, t.type]));
-    } catch {
-      // `type` column may not exist yet — default to "project"
-    }
-    return NextResponse.json(templates.map(t => ({ ...t, type: typeMap[t.id] || "project" })));
+    const templates = await db.select().from(timelineTemplatesTable).orderBy(asc(timelineTemplatesTable.createdAt));
+    const allTasks = await db.select().from(templateTasksTable).orderBy(asc(templateTasksTable.sortOrder));
+
+    const results = templates.map(t => ({
+      ...t,
+      tasks: allTasks.filter(task => task.templateId === t.id)
+    }));
+
+    return NextResponse.json(results);
   } catch (err: any) {
     console.error("Template Fetch Error:", err);
     return NextResponse.json({ 
@@ -33,40 +32,48 @@ export async function GET() {
   }
 }
 
-// POST /api/templates — create a new template
+/** 
+ * POST /api/templates — create a new template 
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { name, description, restDays, type, tasks } = body;
 
-    const template = await db.timelineTemplate.create({
-      data: {
+    const templateId = `tpl_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+
+    await db.transaction(async (tx) => {
+      await tx.insert(timelineTemplatesTable).values({
+        id: templateId,
         name,
         description: description || "",
         restDays: restDays || "Saturday,Sunday",
-        tasks: {
-          create: (tasks || []).map((t: any, idx: number) => ({
-            taskCode: t.taskCode || `CUSTOM-${String(idx + 1).padStart(4, "0")}`,
-            subject: t.subject,
-            defaultDuration: t.defaultDuration || 8,
-            sortOrder: idx + 1,
-          })),
-        },
-      },
-      include: { tasks: { orderBy: { sortOrder: "asc" } } },
+        type: type || "project",
+        createdAt: now,
+        updatedAt: now
+      });
+
+      if (tasks && tasks.length > 0) {
+        const taskValues = tasks.map((t: any, idx: number) => ({
+          id: `tpt_${templateId}_${idx}`,
+          templateId,
+          taskCode: t.taskCode || `CUSTOM-${String(idx + 1).padStart(4, "0")}`,
+          subject: t.subject,
+          defaultDuration: t.defaultDuration || 8,
+          sortOrder: idx + 1,
+        }));
+        await tx.insert(templateTasksTable).values(taskValues);
+      }
     });
 
-    // Set type via raw SQL (field not in generated Prisma client)
-    if (type && type !== "project") {
-      try {
-        await db.$executeRawUnsafe("UPDATE TimelineTemplate SET type = ? WHERE id = ?", type, template.id);
-      } catch {
-        // `type` column may not exist — skip silently
-      }
-    }
+    const rows = await db.select().from(timelineTemplatesTable).where(eq(timelineTemplatesTable.id, templateId)).limit(1);
+    const resultTasks = await db.select().from(templateTasksTable).where(eq(templateTasksTable.templateId, templateId)).orderBy(asc(templateTasksTable.sortOrder));
 
-    return NextResponse.json({ ...template, type: type || "project" });
+    return NextResponse.json({ ...rows[0], tasks: resultTasks });
   } catch (err: any) {
+    console.error("Template Create Error:", err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

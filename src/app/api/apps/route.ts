@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { apps as appsTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { asc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +17,7 @@ const DEFAULT_APPS = [
 
 export async function GET() {
   try {
-    const apps = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, name, slug, description, icon, href, isActive, isBuiltIn, sortOrder, provider
-       FROM App ORDER BY sortOrder ASC, name ASC`
-    );
+    const apps = await db.select().from(appsTable).orderBy(asc(appsTable.sortOrder), asc(appsTable.name));
     return NextResponse.json(apps.length > 0 ? apps : DEFAULT_APPS);
   } catch (error: any) {
     console.error("Fetch apps error:", error);
@@ -36,16 +35,26 @@ export async function POST(req: Request) {
     if (!name || !slug || !href) {
       return NextResponse.json({ error: "name, slug, href required" }, { status: 400 });
     }
+    
+    // Generate a secure ID or let the default cuid handle it
+    // In this case, we'll let schema.ts's defaultFn handle it or provide it
     const id = `app_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
-    const now = new Date().toISOString();
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO App (id, name, slug, description, icon, href, isActive, isBuiltIn, sortOrder, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-      id, name, slug, description ?? null, icon ?? null, href,
-      isActive !== false ? 1 : 0, sortOrder ?? 0, now, now
-    );
+    
+    await db.insert(appsTable).values({
+      id,
+      name,
+      slug,
+      description: description ?? null,
+      icon: icon ?? null,
+      href,
+      isActive: isActive !== false,
+      isBuiltIn: false,
+      sortOrder: sortOrder ?? 0,
+    });
+    
     return NextResponse.json({ id, name, slug, href });
   } catch (error: any) {
+    console.error("Create app error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

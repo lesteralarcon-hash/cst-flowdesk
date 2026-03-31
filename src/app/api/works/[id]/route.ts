@@ -1,103 +1,123 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { savedWorks as savedWorksTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and } from "drizzle-orm";
 
+export const dynamic = "force-dynamic";
+
+/** 
+ * GET /api/works/[id] — fetch a single saved work 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const currentUserId = session?.user?.id;
+    if (!currentUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const work = await prisma.savedWork.findFirst({
-      where: { id: params.id, userId: session.user.id },
-    });
+    const rows = await db.select()
+      .from(savedWorksTable)
+      .where(and(eq(savedWorksTable.id, params.id), eq(savedWorksTable.userId, currentUserId)))
+      .limit(1);
 
-    if (!work) {
+    if (rows.length === 0) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    return NextResponse.json(work);
+    return NextResponse.json(rows[0]);
   } catch (error: any) {
     console.error("Get work error:", error);
     return NextResponse.json({ error: error.message || "Failed to fetch work" }, { status: 500 });
   }
 }
 
+/** 
+ * PATCH /api/works/[id] — update a saved work 
+ * MIGRATED TO DRIZZLE
+ */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const currentUserId = session?.user?.id;
+    if (!currentUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { id: workId } = params;
+
     // Verify ownership first
-    const existing = await prisma.savedWork.findFirst({
-      where: { id: params.id, userId: session.user.id },
-    });
-    if (!existing) {
+    const existingRows = await db.select()
+      .from(savedWorksTable)
+      .where(and(eq(savedWorksTable.id, workId), eq(savedWorksTable.userId, currentUserId)))
+      .limit(1);
+
+    if (existingRows.length === 0) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
     const body = await req.json();
     const ALLOWED = ["title", "data", "clientProfileId", "flowCategory"];
-    const setClauses: string[] = [];
-    const values: any[] = [];
+    const updateData: any = { updatedAt: new Date().toISOString() };
 
+    let hasUpdate = false;
     for (const key of ALLOWED) {
-      if (!(key in body) || body[key] === undefined) continue;
-      setClauses.push(`"${key}" = ?`);
-      values.push(body[key] ?? null);
+      if (key in body && body[key] !== undefined) {
+        updateData[key] = body[key] ?? null;
+        hasUpdate = true;
+      }
     }
 
-    if (setClauses.length === 0) {
+    if (!hasUpdate) {
       return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
     }
 
-    setClauses.push(`"updatedAt" = ?`);
-    values.push(new Date().toISOString());
-    values.push(params.id);
+    await db.update(savedWorksTable).set(updateData).where(eq(savedWorksTable.id, workId));
 
-    await prisma.$executeRawUnsafe(
-      `UPDATE SavedWork SET ${setClauses.join(", ")} WHERE id = ?`,
-      ...values
-    );
-
-    const updated = await prisma.savedWork.findFirst({
-      where: { id: params.id },
-    });
-
-    return NextResponse.json(updated);
+    const updatedRows = await db.select().from(savedWorksTable).where(eq(savedWorksTable.id, workId)).limit(1);
+    return NextResponse.json(updatedRows[0]);
   } catch (error: any) {
     console.error("Update work error:", error);
     return NextResponse.json({ error: error.message || "Failed to update work" }, { status: 500 });
   }
 }
 
+/** 
+ * DELETE /api/works/[id] — delete a saved work 
+ * MIGRATED TO DRIZZLE
+ */
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const currentUserId = session?.user?.id;
+    if (!currentUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const existing = await prisma.savedWork.findFirst({
-      where: { id: params.id, userId: session.user.id },
-    });
-    if (!existing) {
+    const { id: workId } = params;
+
+    // Verify ownership first
+    const existingRows = await db.select()
+      .from(savedWorksTable)
+      .where(and(eq(savedWorksTable.id, workId), eq(savedWorksTable.userId, currentUserId)))
+      .limit(1);
+
+    if (existingRows.length === 0) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    await prisma.$executeRawUnsafe(`DELETE FROM SavedWork WHERE id = ?`, params.id);
+    await db.delete(savedWorksTable).where(eq(savedWorksTable.id, workId));
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

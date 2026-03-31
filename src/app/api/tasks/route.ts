@@ -1,10 +1,24 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { 
+  timelineItems as timelineItemsTable, 
+  tarkieMeetings as tarkieMeetingsTable, 
+  taskAssignments as taskAssignmentsTable, 
+  meetingAssignments as meetingAssignmentsTable,
+  users as usersTable,
+  projects as projectsTable,
+  clientProfiles as clientProfilesTable
+} from "@/db/schema";
 import { auth } from "@/auth";
-import { materializeRecurringInstances, detectConflicts, computeDailyHours, detectOverload } from "@/lib/scheduling";
+import { materializeRecurringInstances, detectConflicts } from "@/lib/scheduling";
+import { eq, and, or, inArray, asc, desc, not, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * GET /api/tasks
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(req: Request) {
   try {
     const session = await auth();
@@ -16,56 +30,111 @@ export async function GET(req: Request) {
     const windowStart = searchParams.get("windowStart");
     const windowEnd = searchParams.get("windowEnd");
     const includeConflicts = searchParams.get("includeConflicts") === "true";
-    const includeOverload = searchParams.get("includeOverload") === "true";
 
-    const where: any = { archived: showArchived };
-    if (projectId && projectId !== "ALL") where.projectId = projectId;
+    const conditions: any[] = [eq(timelineItemsTable.archived, showArchived)];
+    if (projectId && projectId !== "ALL") {
+      conditions.push(eq(timelineItemsTable.projectId, projectId));
+    }
 
     // 1. Fetch EVERYTHING flat
-    const allItems = await prisma.timelineItem.findMany({
-      where,
-      include: {
-        project: { select: { id: true, name: true, companyName: true } },
-      } as any,
-      orderBy: { sortOrder: "asc" },
-    });
+    const allItemsRaw = await db.select({
+      id: timelineItemsTable.id,
+      projectId: timelineItemsTable.projectId,
+      taskCode: timelineItemsTable.taskCode,
+      subject: timelineItemsTable.subject,
+      plannedStart: timelineItemsTable.plannedStart,
+      plannedEnd: timelineItemsTable.plannedEnd,
+      actualStart: timelineItemsTable.actualStart,
+      actualEnd: timelineItemsTable.actualEnd,
+      durationHours: timelineItemsTable.durationHours,
+      owner: timelineItemsTable.owner,
+      status: timelineItemsTable.status,
+      sortOrder: timelineItemsTable.sortOrder,
+      archived: timelineItemsTable.archived,
+      parentId: timelineItemsTable.parentId,
+      isRecurringTemplate: timelineItemsTable.isRecurringTemplate,
+      recurringFrequency: timelineItemsTable.recurringFrequency,
+      recurringUntil: timelineItemsTable.recurringUntil,
+      recurringParentId: timelineItemsTable.recurringParentId,
+      kanbanLaneId: timelineItemsTable.kanbanLaneId,
+      clientProfileId: timelineItemsTable.clientProfileId,
+      project: {
+        id: projectsTable.id,
+        name: projectsTable.name,
+        companyName: projectsTable.companyName,
+      }
+    })
+    .from(timelineItemsTable)
+    .leftJoin(projectsTable, eq(projectsTable.id, timelineItemsTable.projectId))
+    .where(and(...conditions))
+    .orderBy(asc(timelineItemsTable.sortOrder));
 
-    // Fetch meetings and convert to task-like objects
-    const allMeetings = await prisma.tarkieMeeting.findMany({
-      where: {
-        status: { not: "cancelled" },
-        ...(projectId && projectId !== "ALL" ? { projectId } : {})
-      },
-      include: { project: { select: { id: true, name: true, companyName: true } } }
-    });
+    // Fetch meetings
+    const meetingConditions: any[] = [not(eq(tarkieMeetingsTable.status, "cancelled"))];
+    if (projectId && projectId !== "ALL") {
+      meetingConditions.push(eq(tarkieMeetingsTable.projectId, projectId));
+    }
 
-    // 2. Fetch Assignments manually via Raw SQL (Prisma client out-of-sync)
-    const taskIds = allItems.map(i => i.id);
+    const allMeetings = await db.select({
+      id: tarkieMeetingsTable.id,
+      projectId: tarkieMeetingsTable.projectId,
+      title: tarkieMeetingsTable.title,
+      scheduledAt: tarkieMeetingsTable.scheduledAt,
+      durationMinutes: tarkieMeetingsTable.durationMinutes,
+      status: tarkieMeetingsTable.status,
+      facilitatorId: tarkieMeetingsTable.facilitatorId,
+      userId: tarkieMeetingsTable.userId,
+      project: {
+        id: projectsTable.id,
+        name: projectsTable.name,
+        companyName: projectsTable.companyName,
+      }
+    })
+    .from(tarkieMeetingsTable)
+    .leftJoin(projectsTable, eq(projectsTable.id, tarkieMeetingsTable.projectId))
+    .where(and(...meetingConditions));
+
+    // 2. Fetch Assignments and Users
+    const taskIds = allItemsRaw.map(i => i.id);
     const meetingIds = allMeetings.map(m => m.id);
 
     const [taskAssignments, meetingAssignments, users] = await Promise.all([
-      taskIds.length > 0 ? prisma.$queryRawUnsafe<any[]>(`SELECT * FROM TaskAssignment WHERE timelineItemId IN (${taskIds.map(id => `'${id}'`).join(',')})`) : Promise.resolve([]),
-      meetingIds.length > 0 ? prisma.$queryRawUnsafe<any[]>(`SELECT * FROM MeetingAssignment WHERE meetingId IN (${meetingIds.map(id => `'${id}'`).join(',')})`) : Promise.resolve([]),
-      prisma.user.findMany({ select: { id: true, name: true, email: true, image: true } })
+      taskIds.length > 0 
+        ? db.select({
+            id: taskAssignmentsTable.id,
+            timelineItemId: taskAssignmentsTable.timelineItemId,
+            userId: taskAssignmentsTable.userId,
+            user: { id: usersTable.id, name: usersTable.name, email: usersTable.email, image: usersTable.image }
+          })
+          .from(taskAssignmentsTable)
+          .innerJoin(usersTable, eq(usersTable.id, taskAssignmentsTable.userId))
+          .where(inArray(taskAssignmentsTable.timelineItemId, taskIds))
+        : Promise.resolve([]),
+      meetingIds.length > 0 
+        ? db.select({
+            id: meetingAssignmentsTable.id,
+            meetingId: meetingAssignmentsTable.meetingId,
+            userId: meetingAssignmentsTable.userId,
+            user: { id: usersTable.id, name: usersTable.name, email: usersTable.email, image: usersTable.image }
+          })
+          .from(meetingAssignmentsTable)
+          .innerJoin(usersTable, eq(usersTable.id, meetingAssignmentsTable.userId))
+          .where(inArray(meetingAssignmentsTable.meetingId, meetingIds))
+        : Promise.resolve([]),
+      db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email, image: usersTable.image })
+        .from(usersTable)
     ]);
 
-    const userMap = new Map(users.map(u => [u.id, u]));
     const taskAssignMap = new Map<string, any[]>();
     taskAssignments.forEach(a => {
-      const u = userMap.get(a.userId);
-      if (u) {
-        if (!taskAssignMap.has(a.timelineItemId)) taskAssignMap.set(a.timelineItemId, []);
-        taskAssignMap.get(a.timelineItemId)!.push({ id: a.id, userId: a.userId, user: u });
-      }
+      if (!taskAssignMap.has(a.timelineItemId)) taskAssignMap.set(a.timelineItemId, []);
+      taskAssignMap.get(a.timelineItemId)!.push(a);
     });
 
     const meetingAssignMap = new Map<string, any[]>();
     meetingAssignments.forEach(a => {
-      const u = userMap.get(a.userId);
-      if (u) {
-        if (!meetingAssignMap.has(a.meetingId)) meetingAssignMap.set(a.meetingId, []);
-        meetingAssignMap.get(a.meetingId)!.push({ id: a.id, userId: a.userId, user: u });
-      }
+      if (!meetingAssignMap.has(a.meetingId)) meetingAssignMap.set(a.meetingId, []);
+      meetingAssignMap.get(a.meetingId)!.push(a);
     });
 
     const meetingItems = allMeetings.map(m => {
@@ -75,8 +144,8 @@ export async function GET(req: Request) {
         projectId: m.projectId,
         taskCode: "MEETING",
         subject: `[MTG] ${m.title}`,
-        plannedStart: start,
-        plannedEnd: new Date(start.getTime() + (m.durationMinutes || 60) * 60000),
+        plannedStart: start.toISOString(),
+        plannedEnd: new Date(start.getTime() + (m.durationMinutes || 60) * 60000).toISOString(),
         durationHours: (m.durationMinutes || 60) / 60,
         owner: m.facilitatorId || m.userId,
         status: m.status === "completed" ? "completed" : "pending",
@@ -88,13 +157,13 @@ export async function GET(req: Request) {
     });
 
     // 3. Materialize recurring instances
-    let allItemsWithVirtual: any[] = [...allItems, ...meetingItems];
+    let allItemsWithVirtual: any[] = [...allItemsRaw, ...meetingItems];
     if (windowStart && windowEnd) {
       const wStart = new Date(windowStart);
       const wEnd = new Date(windowEnd);
-      const templates = allItems.filter(i => i.isRecurringTemplate);
+      const templates = allItemsRaw.filter(i => i.isRecurringTemplate);
       const instanceDatesByTemplate = new Map<string, Set<string>>();
-      allItems.forEach(i => {
+      allItemsRaw.forEach(i => {
         if (i.recurringParentId && i.plannedStart) {
           if (!instanceDatesByTemplate.has(i.recurringParentId)) instanceDatesByTemplate.set(i.recurringParentId, new Set());
           instanceDatesByTemplate.get(i.recurringParentId)!.add(new Date(i.plannedStart).toISOString().split("T")[0]);
@@ -105,8 +174,8 @@ export async function GET(req: Request) {
         const virtual = materializeRecurringInstances(
           {
             ...template,
-            plannedStart: template.plannedStart?.toISOString() ?? "",
-            plannedEnd: template.plannedEnd?.toISOString() ?? "",
+            plannedStart: template.plannedStart ?? "",
+            plannedEnd: template.plannedEnd ?? "",
             recurringFrequency: template.recurringFrequency!,
             recurringUntil: template.recurringUntil ?? null,
             project: (template as any).project ? { id: (template as any).projectId, ...(template as any).project } : undefined,
@@ -123,10 +192,12 @@ export async function GET(req: Request) {
     const conflictMap = new Map<string, any>();
     if (includeConflicts) {
       const conflicts = detectConflicts(allItemsWithVirtual.map(i => ({
-        id: i.id, owner: i.owner,
-        plannedStart: i.plannedStart instanceof Date ? i.plannedStart.toISOString() : (i.plannedStart ?? ""),
-        plannedEnd: i.plannedEnd instanceof Date ? i.plannedEnd.toISOString() : (i.plannedEnd ?? ""),
-        archived: i.archived ?? false, status: i.status ?? "pending",
+        id: i.id, 
+        owner: i.owner,
+        plannedStart: i.plannedStart ?? "",
+        plannedEnd: i.plannedEnd ?? "",
+        archived: i.archived ?? false, 
+        status: i.status ?? "pending",
       })));
       conflicts.forEach(c => {
         if (!conflictMap.has(c.taskId)) conflictMap.set(c.taskId, []);
@@ -134,23 +205,11 @@ export async function GET(req: Request) {
       });
     }
 
-    // 5. Manual Kanban & Client Data linking
-    const extraDataMap = new Map<string, any>();
-    try {
-      const rows = await prisma.$queryRawUnsafe<any[]>(
-        `SELECT id, kanbanLaneId, clientProfileId FROM TimelineItem`
-      );
-      rows.forEach(r => extraDataMap.set(r.id, { k: r.kanbanLaneId, c: r.clientProfileId }));
-    } catch {}
-
-    // 6. Build Tree
+    // 5. Build Tree
     const itemMap = new Map();
     allItemsWithVirtual.forEach(item => {
-      const extra = extraDataMap.get(item.id);
       itemMap.set(item.id, {
         ...item,
-        kanbanLaneId: extra?.k ?? item.kanbanLaneId ?? null,
-        clientProfileId: extra?.c ?? item.clientProfileId ?? null,
         assignments: taskAssignMap.get(item.id) || (item.assignments || []),
         subtasks: [],
         conflictInfo: conflictMap.get(item.id) || []
@@ -170,73 +229,75 @@ export async function GET(req: Request) {
   }
 }
 
+/**
+ * POST /api/tasks
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: Request) {
   try {
     const session = await auth();
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = session.user.id;
     const body = await req.json();
     const { projectId, subject, plannedStart, plannedEnd, owner, parentId, durationHours, assignedIds } = body;
 
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: { companyName: true, clientProfileId: true }
-    });
+    const projectRows = await db.select({ companyName: projectsTable.companyName, clientProfileId: projectsTable.clientProfileId })
+      .from(projectsTable)
+      .where(eq(projectsTable.id, projectId))
+      .limit(1);
+    const project = projectRows[0];
 
     const prefix = project?.companyName 
-      ? project.companyName.split(" ")[0].replace(/[^a-zA-Z]/g, "").substring(0, 3).toUpperCase()
+      ? project.companyName.split(" ")[0].replace(/[^a-zA-Z]/g, "").toUpperCase().substring(0, 3)
       : "GEN";
 
     const taskCode = `TASK-${prefix}-${Math.floor(100000 + Math.random() * 900000)}`;
     const taskId = `task_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
 
-    // Insertion via Raw SQL
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO TimelineItem (
-        id, projectId, clientProfileId, taskCode, subject, plannedStart, plannedEnd, 
-        parentId, owner, status, durationHours, sortOrder, archived, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      taskId,
-      projectId,
-      project?.clientProfileId || null,
-      taskCode,
-      subject || "Untitled Task",
-      new Date(plannedStart).toISOString(),
-      new Date(plannedEnd).toISOString(),
-      parentId || null,
-      owner || null,
-      'pending',
-      durationHours ?? 8,
-      0,
-      0,
-      now,
-      now
-    );
+    await db.transaction(async (tx) => {
+      // 1. Insert Task
+      await tx.insert(timelineItemsTable).values({
+        id: taskId,
+        projectId,
+        clientProfileId: project?.clientProfileId || null,
+        taskCode,
+        subject: subject || "Untitled Task",
+        plannedStart: new Date(plannedStart).toISOString(),
+        plannedEnd: new Date(plannedEnd).toISOString(),
+        parentId: parentId || null,
+        owner: owner || null,
+        status: 'pending',
+        durationHours: durationHours ?? 8,
+        sortOrder: 0,
+        archived: false,
+        createdAt: now,
+        updatedAt: now
+      });
 
-    if (assignedIds && Array.isArray(assignedIds)) {
-      for (const uid of assignedIds) {
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO TaskAssignment (id, timelineItemId, userId) VALUES (?, ?, ?)`,
-          `asgn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
-          taskId,
-          uid
-        );
+      // 2. Insert Assignments
+      if (assignedIds && Array.isArray(assignedIds)) {
+        for (const uid of assignedIds) {
+          await tx.insert(taskAssignmentsTable).values({
+            id: `asgn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+            timelineItemId: taskId,
+            userId: uid
+          });
+        }
       }
-    }
 
-    if (parentId) {
-      try {
-        const childStartISO = new Date(plannedStart).toISOString();
-        const childEndISO = new Date(plannedEnd).toISOString();
-        await prisma.$executeRawUnsafe(
-          `UPDATE TimelineItem
-           SET "plannedStart" = MIN(COALESCE("plannedStart", ?), ?),
-               "plannedEnd"   = MAX(COALESCE("plannedEnd",   ?), ?)
-           WHERE id = ?`,
-          childStartISO, childStartISO, childEndISO, childEndISO, parentId
-        );
-      } catch {}
-    }
+      // 3. Roll-up dates to parent
+      if (parentId) {
+        const startISO = new Date(plannedStart).toISOString();
+        const endISO = new Date(plannedEnd).toISOString();
+        await tx.run(sql`
+          UPDATE TimelineItem
+          SET plannedStart = MIN(COALESCE(plannedStart, ${startISO}), ${startISO}),
+              plannedEnd   = MAX(COALESCE(plannedEnd,   ${endISO}),   ${endISO})
+          WHERE id = ${parentId}
+        `);
+      }
+    });
 
     return NextResponse.json({ id: taskId, taskCode, subject });
   } catch (error: any) {
@@ -245,6 +306,10 @@ export async function POST(req: Request) {
   }
 }
 
+/**
+ * PATCH /api/tasks
+ * MIGRATED TO DRIZZLE
+ */
 export async function PATCH(req: Request) {
   try {
     const session = await auth();
@@ -252,51 +317,55 @@ export async function PATCH(req: Request) {
     const body = await req.json();
     const { id, comment, assignedIds, ...rawUpdate } = body;
 
-    const current = await prisma.timelineItem.findUnique({ where: { id } });
+    const currentRows = await db.select().from(timelineItemsTable).where(eq(timelineItemsTable.id, id)).limit(1);
+    const current = currentRows[0];
     if (!current) return NextResponse.json({ error: "Task not found" }, { status: 404 });
 
     const ALLOWED = ["subject","owner","description","status","plannedStart","plannedEnd","actualStart","actualEnd","archived","sortOrder","durationHours","recurringFrequency","recurringUntil","isRecurringTemplate","kanbanLaneId"];
-    const setClauses: string[] = [];
-    const values: any[] = [];
-
+    const updateData: any = {};
     for (const key of ALLOWED) {
       if (!(key in rawUpdate) || rawUpdate[key] === undefined) continue;
       let val = rawUpdate[key];
       if (["plannedStart","plannedEnd","actualStart","actualEnd"].includes(key) && val) {
-        val = new Date(val).toISOString().replace("T", " ").replace("Z", "");
+        val = new Date(val).toISOString();
       }
-      setClauses.push(`"${key}" = ?`);
-      values.push(val);
+      updateData[key] = val;
     }
 
-    if (setClauses.length > 0) {
-      values.push(id);
-      await prisma.$executeRawUnsafe(`UPDATE TimelineItem SET ${setClauses.join(", ")} WHERE id = ?`, ...values);
-    }
-
-    if (assignedIds) {
-      await prisma.$executeRawUnsafe(`DELETE FROM TaskAssignment WHERE timelineItemId = ?`, id);
-      for (const uid of assignedIds) {
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO TaskAssignment (id, timelineItemId, userId) VALUES (?, ?, ?)`,
-          `asgn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
-          id, uid
-        );
+    await db.transaction(async (tx) => {
+      // 1. Update Task
+      if (Object.keys(updateData).length > 0) {
+        await tx.update(timelineItemsTable)
+          .set({ ...updateData, updatedAt: new Date().toISOString() })
+          .where(eq(timelineItemsTable.id, id));
       }
-    }
 
-    if (current.parentId && (rawUpdate.plannedStart || rawUpdate.plannedEnd)) {
-      try {
-        const s = rawUpdate.plannedStart ? new Date(rawUpdate.plannedStart).toISOString() : null;
-        const e = rawUpdate.plannedEnd ? new Date(rawUpdate.plannedEnd).toISOString() : null;
-        if (s && e) {
-          await prisma.$executeRawUnsafe(
-            `UPDATE TimelineItem SET "plannedStart" = MIN(COALESCE("plannedStart", ?), ?), "plannedEnd" = MAX(COALESCE("plannedEnd", ?), ?) WHERE id = ?`,
-            s, s, e, e, current.parentId
-          );
+      // 2. Update Assignments
+      if (assignedIds) {
+        await tx.delete(taskAssignmentsTable).where(eq(taskAssignmentsTable.timelineItemId, id));
+        for (const uid of assignedIds) {
+          await tx.insert(taskAssignmentsTable).values({
+            id: `asgn_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+            timelineItemId: id,
+            userId: uid
+          });
         }
-      } catch {}
-    }
+      }
+
+      // 3. Roll-up dates to parent
+      if (current.parentId && (updateData.plannedStart || updateData.plannedEnd)) {
+        const startISO = updateData.plannedStart || current.plannedStart;
+        const endISO = updateData.plannedEnd || current.plannedEnd;
+        if (startISO && endISO) {
+          await tx.run(sql`
+            UPDATE TimelineItem
+            SET plannedStart = MIN(COALESCE(plannedStart, ${startISO}), ${startISO}),
+                plannedEnd   = MAX(COALESCE(plannedEnd,   ${endISO}),   ${endISO})
+            WHERE id = ${current.parentId}
+          `);
+        }
+      }
+    });
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

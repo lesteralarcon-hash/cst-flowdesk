@@ -34,8 +34,11 @@ export async function readAIConfig(): Promise<AIConfig> {
 
   // 2. Fetch from Database (GlobalSetting table)
   try {
-    const { prisma } = await import("./prisma");
-    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
+    const { db } = await import("@/db");
+    const { globalSettings } = await import("@/db/schema");
+    
+    // Fetch all settings
+    const settings = await db.select().from(globalSettings);
     const raw: Record<string, string> = {};
     settings.forEach(s => { raw[s.key] = s.value; });
 
@@ -136,15 +139,17 @@ export async function getClaudeModel() {
  * Usage: const model = await getModelForApp("brd")
  */
 export async function getModelForApp(slug: string) {
-  // Dynamically import prisma to avoid circular deps at module load time
-  const { prisma } = await import("./prisma");
+  const { db } = await import("@/db");
+  const { apps } = await import("@/db/schema");
+  const { eq } = await import("drizzle-orm");
   const config = await readAIConfig();
 
   let provider: string | null = null;
   try {
-    const rows = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT provider FROM App WHERE slug = ? LIMIT 1`, slug
-    );
+    const rows = await db.select({ provider: apps.provider })
+      .from(apps)
+      .where(eq(apps.slug, slug))
+      .limit(1);
     provider = rows[0]?.provider ?? null;
   } catch (err) {
     console.error(`AI Model App lookup failed for ${slug}:`, err);

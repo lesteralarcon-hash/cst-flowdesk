@@ -1,13 +1,25 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { roles as rolesTable } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/** 
+ * DELETE /api/settings/roles/[id] 
+ * MIGRATED TO DRIZZLE
+ */
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-  const session = await auth();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const session = await auth();
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  await prisma.$executeRawUnsafe("DELETE FROM Role WHERE id = ?", params.id);
-  return NextResponse.json({ ok: true });
+    await db.delete(rolesTable).where(eq(rolesTable.id, params.id));
+    
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
+    console.error("DELETE /api/settings/roles/[id] error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }

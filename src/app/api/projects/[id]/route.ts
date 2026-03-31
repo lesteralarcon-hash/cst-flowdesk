@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { projects as projectsTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq } from "drizzle-orm";
 
+/**
+ * GET /api/projects/[id]
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -14,20 +20,12 @@ export async function GET(
 
     const { id: projectId } = params;
 
-    // Use raw SQL fallback for robustness
-    let project: any = null;
-    try {
-      project = await (prisma as any).tarkieProject.findUnique({
-        where: { id: projectId }
-      });
-    } catch {
-      console.warn("tarkieProject model missing, using raw SQL");
-      const results = await prisma.$queryRawUnsafe(
-        `SELECT * FROM TarkieProject WHERE id = ? LIMIT 1`,
-        projectId
-      ) as any[];
-      project = results[0] || null;
-    }
+    const rows = await db.select()
+      .from(projectsTable)
+      .where(eq(projectsTable.id, projectId))
+      .limit(1);
+    
+    const project = rows[0] || null;
 
     if (!project) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });

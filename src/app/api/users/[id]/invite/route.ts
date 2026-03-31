@@ -1,43 +1,69 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { users as usersTable } from "@/db/schema";
 import { sendInviteEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
+import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-/* ─── POST /api/users/[id]/invite ─── (re)send invite email ─── */
+/** 
+ * POST /api/users/[id]/invite — (re)send invite email 
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  try {
+    const session = await auth();
+    const currentUserId = session?.user?.id;
+    const currentUserRole = (session?.user as any)?.role;
+    if (!currentUserId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (currentUserRole !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const users = await prisma.$queryRawUnsafe<any[]>(
-    `SELECT id, name, email, status FROM User WHERE id = ?`, params.id
-  );
-  if (!users.length) return NextResponse.json({ error: "User not found" }, { status: 404 });
+    const { id: targetUserId } = params;
 
-  const user = users[0];
-  if (user.status === "approved") {
-    return NextResponse.json({ error: "User is already active" }, { status: 400 });
+    const rows = await db.select({
+      id: usersTable.id,
+      name: usersTable.name,
+      email: usersTable.email,
+      status: usersTable.status
+    })
+    .from(usersTable)
+    .where(eq(usersTable.id, targetUserId))
+    .limit(1);
+
+    if (rows.length === 0) return NextResponse.json({ error: "User not found" }, { status: 404 });
+
+    const user = rows[0];
+    // If user is already active/approved, we don't need to re-invite (though they might want to reset)
+    // For this flow, we follow the original logic: only re-invite if status is 'pending' or similar
+    if (user.status === "approved") {
+      return NextResponse.json({ error: "User is already active" }, { status: 400 });
+    }
+
+    // Regenerate invite token
+    const inviteToken = randomBytes(32).toString("hex");
+    const now = new Date().toISOString();
+
+    await db.update(usersTable)
+      .set({
+        inviteToken,
+        invitedBy: currentUserId,
+        invitedAt: now
+      })
+      .where(eq(usersTable.id, targetUserId));
+
+    const inviterName = session?.user?.name || session?.user?.email || "A team admin";
+    await sendInviteEmail({
+      to: user.email!,
+      inviteeName: user.name || "",
+      invitedByName: inviterName,
+      inviteToken,
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error("POST /api/users/[id]/invite error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-
-  // Regenerate invite token
-  const inviteToken = randomBytes(32).toString("hex");
-  const now = new Date().toISOString();
-
-  await prisma.$executeRawUnsafe(
-    `UPDATE User SET inviteToken = ?, invitedBy = ?, invitedAt = ? WHERE id = ?`,
-    inviteToken, session.user.id, now, params.id
-  );
-
-  const inviterName = session.user.name || session.user.email || "A team admin";
-  await sendInviteEmail({
-    to: user.email,
-    inviteeName: user.name || "",
-    invitedByName: inviterName,
-    inviteToken,
-  });
-
-  return NextResponse.json({ success: true });
 }

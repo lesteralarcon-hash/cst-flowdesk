@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { 
+  tarkieMeetings as tarkieMeetingsTable, 
+  meetingAttendees as meetingAttendeesTable 
+} from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and } from "drizzle-orm";
+
+export const dynamic = "force-dynamic";
 
 /**
  * PATCH /api/meetings/[id]/attendees/[attendeeId]
- * Update attendee status or details (authenticated)
+ * MIGRATED TO DRIZZLE
  */
 export async function PATCH(
   req: Request,
@@ -12,33 +19,36 @@ export async function PATCH(
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // Verify organizer owns this meeting
-    const meeting = await prisma.tarkieMeeting.findFirst({
-      where: { id: params.id, userId: session.user.id },
-    });
-    if (!meeting) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, params.id), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    if (meetingRows.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const body = await req.json();
     const { attendanceStatus, fullName, position, companyName, mobileNumber, email } = body;
 
-    const data: any = {};
-    if (attendanceStatus) data.attendanceStatus = attendanceStatus;
-    if (fullName !== undefined) data.fullName = fullName;
-    if (position !== undefined) data.position = position;
-    if (companyName !== undefined) data.companyName = companyName;
-    if (mobileNumber !== undefined) data.mobileNumber = mobileNumber;
-    if (email !== undefined) data.email = email;
+    const updateData: any = {};
+    if (attendanceStatus) updateData.attendanceStatus = attendanceStatus;
+    if (fullName !== undefined) updateData.fullName = fullName;
+    if (position !== undefined) updateData.position = position;
+    if (companyName !== undefined) updateData.companyName = companyName;
+    if (mobileNumber !== undefined) updateData.mobileNumber = mobileNumber;
+    if (email !== undefined) updateData.email = email;
 
-    const updated = await prisma.meetingAttendee.update({
-      where: { id: params.attendeeId },
-      data,
-    });
+    if (Object.keys(updateData).length === 0) {
+      return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    }
 
-    return NextResponse.json(updated);
+    await db.update(meetingAttendeesTable)
+      .set(updateData)
+      .where(eq(meetingAttendeesTable.id, params.attendeeId));
+
+    const attendeeRows = await db.select().from(meetingAttendeesTable).where(eq(meetingAttendeesTable.id, params.attendeeId)).limit(1);
+    return NextResponse.json(attendeeRows[0]);
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
@@ -46,7 +56,7 @@ export async function PATCH(
 
 /**
  * DELETE /api/meetings/[id]/attendees/[attendeeId]
- * Remove an attendee (authenticated)
+ * MIGRATED TO DRIZZLE
  */
 export async function DELETE(
   req: Request,
@@ -54,16 +64,15 @@ export async function DELETE(
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const meeting = await prisma.tarkieMeeting.findFirst({
-      where: { id: params.id, userId: session.user.id },
-    });
-    if (!meeting) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, params.id), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    if (meetingRows.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    await prisma.meetingAttendee.delete({ where: { id: params.attendeeId } });
+    await db.delete(meetingAttendeesTable).where(eq(meetingAttendeesTable.id, params.attendeeId));
     return NextResponse.json({ success: true });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

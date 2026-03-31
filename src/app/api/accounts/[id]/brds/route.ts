@@ -1,55 +1,75 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { 
+  clientProfiles as clientProfilesTable, 
+  savedWorks as savedWorksTable, 
+  tarkieMeetings as tarkieMeetingsTable, 
+  meetingTranscripts as meetingTranscriptsTable 
+} from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, desc, inArray, isNotNull } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * GET /api/accounts/[id]/brds
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const accountId = params.id;
 
     // Verify account belongs to this user
-    const account = await prisma.clientProfile.findFirst({
-      where: { id: accountId, userId: session.user.id },
-    });
-    if (!account) {
+    const accountRows = await db.select({ id: clientProfilesTable.id })
+      .from(clientProfilesTable)
+      .where(and(eq(clientProfilesTable.id, accountId), eq(clientProfilesTable.userId, userId)))
+      .limit(1);
+      
+    if (accountRows.length === 0) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
     // 1. Standalone BRDs saved via BRD Maker
-    const standalone = await prisma.savedWork.findMany({
-      where: { appType: "brd", clientProfileId: accountId, userId: session.user.id },
-      orderBy: { updatedAt: "desc" },
-    });
+    const standalone = await db.select()
+      .from(savedWorksTable)
+      .where(and(
+        eq(savedWorksTable.appType, "brd"),
+        eq(savedWorksTable.clientProfileId, accountId),
+        eq(savedWorksTable.userId, userId)
+      ))
+      .orderBy(desc(savedWorksTable.updatedAt));
 
-    // 2. BRDs generated from meetings (via MeetingTranscript.generatedBRD)
-    const meetings = await prisma.tarkieMeeting.findMany({
-      where: { clientProfileId: accountId, userId: session.user.id },
-      orderBy: { scheduledAt: "desc" },
-    });
+    // 2. BRDs generated from meetings
+    const meetings = await db.select()
+      .from(tarkieMeetingsTable)
+      .where(and(
+        eq(tarkieMeetingsTable.clientProfileId, accountId),
+        eq(tarkieMeetingsTable.userId, userId)
+      ))
+      .orderBy(desc(tarkieMeetingsTable.scheduledAt));
 
     const meetingIds = meetings.map((m: any) => m.id);
     const transcripts = meetingIds.length > 0
-      ? await prisma.meetingTranscript.findMany({
-          where: {
-            meetingId: { in: meetingIds },
-            generatedBRD: { not: null },
-          },
-        })
+      ? await db.select()
+          .from(meetingTranscriptsTable)
+          .where(and(
+            inArray(meetingTranscriptsTable.meetingId, meetingIds),
+            isNotNull(meetingTranscriptsTable.generatedBRD)
+          ))
       : [];
 
     const meetingMap = Object.fromEntries(meetings.map((m: any) => [m.id, m]));
 
     const fromMeetings = transcripts
-      .filter((t: any) => t.generatedBRD)
       .map((t: any) => ({
         id: t.id,
         source: "meeting" as const,

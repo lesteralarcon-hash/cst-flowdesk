@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { timelineItems as timelineItemsTable, projects as projectsTable } from "@/db/schema";
 import { auth } from "@/auth";
 import { getModelForApp } from "@/lib/ai";
+import { eq, and, ne, asc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/** 
+ * POST /api/ai/day-planner 
+ * MIGRATED TO DRIZZLE
+ */
 export async function POST(req: Request) {
   try {
     const session = await auth();
@@ -16,17 +22,30 @@ export async function POST(req: Request) {
     const in3Days = new Date(today.getTime() + 3 * 86400000);
 
     // Fetch tasks relevant to this owner
-    const where: any = { archived: false, status: { not: "completed" } };
-    if (ownerLabel) where.owner = ownerLabel;
+    const conditions = [
+      eq(timelineItemsTable.archived, false),
+      ne(timelineItemsTable.status, "completed")
+    ];
+    if (ownerLabel) {
+      conditions.push(eq(timelineItemsTable.owner, ownerLabel));
+    }
 
-    const tasks = await prisma.timelineItem.findMany({
-      where,
-      include: { project: { select: { name: true } } },
-      orderBy: { plannedStart: "asc" },
-      take: 30,
-    });
+    const rows = await db.select({
+      id: timelineItemsTable.id,
+      taskCode: timelineItemsTable.taskCode,
+      subject: timelineItemsTable.subject,
+      status: timelineItemsTable.status,
+      durationHours: timelineItemsTable.durationHours,
+      plannedEnd: timelineItemsTable.plannedEnd,
+      projectName: projectsTable.name
+    })
+    .from(timelineItemsTable)
+    .leftJoin(projectsTable, eq(timelineItemsTable.projectId, projectsTable.id))
+    .where(and(...conditions))
+    .orderBy(asc(timelineItemsTable.plannedStart))
+    .limit(30);
 
-    if (tasks.length === 0) {
+    if (rows.length === 0) {
       return NextResponse.json({
         schedule: [],
         deferredTasks: [],
@@ -44,11 +63,11 @@ export async function POST(req: Request) {
       return "normal";
     };
 
-    const taskList = tasks.map(t => ({
+    const taskList = rows.map(t => ({
       id: t.id,
       taskCode: t.taskCode,
       subject: t.subject,
-      project: t.project?.name ?? "—",
+      project: t.projectName ?? "—",
       status: t.status,
       durationHours: t.durationHours ?? 8,
       plannedEnd: t.plannedEnd ? new Date(t.plannedEnd).toISOString().split("T")[0] : null,

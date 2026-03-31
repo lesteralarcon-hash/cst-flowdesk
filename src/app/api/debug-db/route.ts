@@ -1,8 +1,13 @@
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { users as usersTable } from "@/db/schema";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+/** 
+ * GET /api/debug-db — diagnostic endpoint 
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET() {
   try {
     // 1. Check environment variables (redacted)
@@ -10,9 +15,7 @@ export async function GET() {
     const hasToken = !!process.env.DATABASE_AUTH_TOKEN;
     
     // 2. Try a simple query
-    const users = await prisma.user.findMany({
-      select: { email: true }
-    });
+    const users = await db.select({ email: usersTable.email }).from(usersTable);
     
     // Redact emails for safety
     const redactedUsers = users.map(u => {

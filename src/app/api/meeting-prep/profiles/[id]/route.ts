@@ -1,24 +1,29 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { clientProfiles as clientProfilesTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and } from "drizzle-orm";
 
 /**
  * PATCH /api/meeting-prep/profiles/[id]
  * Update a client profile (partial update)
- * PRODUCTION-SAFE: 100% raw SQL
+ * MIGRATED TO DRIZZLE
  */
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Raw SQL instead of Prisma ORM findUnique
-    const existing = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, userId FROM ClientProfile WHERE id = ?`, params.id
-    );
-    if (existing.length === 0 || existing[0].userId !== session.user.id) {
+    // Ownership check with Drizzle
+    const existing = await db.select({ id: clientProfilesTable.id, userId: clientProfilesTable.userId })
+      .from(clientProfilesTable)
+      .where(eq(clientProfilesTable.id, params.id))
+      .limit(1);
+
+    if (existing.length === 0 || existing[0].userId !== userId) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
@@ -33,33 +38,25 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       specialConsiderations,
     } = body;
 
-    const setClauses: string[] = [];
-    const values: any[] = [];
+    // Drizzle update
+    await db.update(clientProfilesTable)
+      .set({
+        ...(companyName !== undefined && { companyName }),
+        ...(industry !== undefined && { industry }),
+        ...(modulesAvailed !== undefined && { modulesAvailed: JSON.stringify(modulesAvailed) }),
+        ...(engagementStatus !== undefined && { engagementStatus }),
+        ...(primaryContact !== undefined && { primaryContact }),
+        ...(primaryContactEmail !== undefined && { primaryContactEmail }),
+        ...(specialConsiderations !== undefined && { specialConsiderations }),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(clientProfilesTable.id, params.id));
 
-    if (companyName !== undefined) { setClauses.push("companyName = ?"); values.push(companyName); }
-    if (industry !== undefined) { setClauses.push("industry = ?"); values.push(industry); }
-    if (modulesAvailed !== undefined) { setClauses.push("modulesAvailed = ?"); values.push(JSON.stringify(modulesAvailed)); }
-    if (engagementStatus !== undefined) { setClauses.push("engagementStatus = ?"); values.push(engagementStatus); }
-    if (primaryContact !== undefined) { setClauses.push("primaryContact = ?"); values.push(primaryContact); }
-    if (primaryContactEmail !== undefined) { setClauses.push("primaryContactEmail = ?"); values.push(primaryContactEmail); }
-    if (specialConsiderations !== undefined) { setClauses.push("specialConsiderations = ?"); values.push(specialConsiderations); }
-
-    if (setClauses.length > 0) {
-      setClauses.push("updatedAt = ?");
-      values.push(new Date().toISOString());
-      
-      values.push(params.id);
-      await prisma.$executeRawUnsafe(
-        `UPDATE ClientProfile SET ${setClauses.join(", ")} WHERE id = ?`,
-        ...values
-      );
-    }
-
-    // Read back with raw SQL
-    const updated = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM ClientProfile WHERE id = ?`,
-      params.id
-    );
+    // Read back
+    const updated = await db.select()
+      .from(clientProfilesTable)
+      .where(eq(clientProfilesTable.id, params.id))
+      .limit(1);
 
     const profile = updated[0] || {};
     return NextResponse.json({
@@ -74,25 +71,29 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
 /**
  * DELETE /api/meeting-prep/profiles/[id]
- * PRODUCTION-SAFE: 100% raw SQL
+ * MIGRATED TO DRIZZLE
  */
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Raw SQL ownership check
-    const existing = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, userId FROM ClientProfile WHERE id = ?`, params.id
-    );
-    if (existing.length === 0 || existing[0].userId !== session.user.id) {
+    // Ownership check with Drizzle
+    const existing = await db.select({ id: clientProfilesTable.id, userId: clientProfilesTable.userId })
+      .from(clientProfilesTable)
+      .where(eq(clientProfilesTable.id, params.id))
+      .limit(1);
+
+    if (existing.length === 0 || existing[0].userId !== userId) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Raw SQL delete
-    await prisma.$executeRawUnsafe(`DELETE FROM ClientProfile WHERE id = ?`, params.id);
+    // Drizzle delete
+    await db.delete(clientProfilesTable).where(eq(clientProfilesTable.id, params.id));
+    
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error("Delete profile error:", error);

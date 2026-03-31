@@ -1,43 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { clientProfiles as clientProfilesTable, projects as projectsTable, timelineItems as timelineItemsTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, desc, inArray } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * GET /api/accounts/[id]/projects
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const accountId = params.id;
 
     // Verify account belongs to this user
-    const account = await prisma.clientProfile.findFirst({
-      where: { id: accountId, userId: session.user.id },
-    });
-    if (!account) {
+    const accountRows = await db.select({ id: clientProfilesTable.id })
+      .from(clientProfilesTable)
+      .where(and(eq(clientProfilesTable.id, accountId), eq(clientProfilesTable.userId, userId)))
+      .limit(1);
+      
+    if (accountRows.length === 0) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    const projects = await prisma.project.findMany({
-      where: { clientProfileId: accountId, userId: session.user.id },
-      orderBy: { startDate: "desc" },
-    });
+    const projects = await db.select()
+      .from(projectsTable)
+      .where(and(
+        eq(projectsTable.clientProfileId, accountId),
+        eq(projectsTable.userId, userId)
+      ))
+      .orderBy(desc(projectsTable.startDate));
 
     if (projects.length === 0) {
       return NextResponse.json([]);
     }
 
-    // Fetch task counts separately (libsql adapter - no include)
+    // Fetch task counts
     const projectIds = projects.map((p: any) => p.id);
-    const tasks = await prisma.timelineItem.findMany({
-      where: { projectId: { in: projectIds }, archived: false },
-    });
+    const tasks = await db.select()
+      .from(timelineItemsTable)
+      .where(and(
+        inArray(timelineItemsTable.projectId, projectIds),
+        eq(timelineItemsTable.archived, false)
+      ));
 
     const tasksByProject: Record<string, any[]> = {};
     for (const t of tasks) {

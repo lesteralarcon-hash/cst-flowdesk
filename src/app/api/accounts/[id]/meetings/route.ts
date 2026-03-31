@@ -1,38 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { clientProfiles as clientProfilesTable, tarkieMeetings as tarkieMeetingsTable, meetingAttendees as meetingAttendeesTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, desc, inArray } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * GET /api/accounts/[id]/meetings
+ * MIGRATED TO DRIZZLE
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const accountId = params.id;
 
     // Verify account belongs to this user
-    const account = await prisma.clientProfile.findFirst({
-      where: { id: accountId, userId: session.user.id },
-    });
-    if (!account) {
+    const accountRows = await db.select({ id: clientProfilesTable.id })
+      .from(clientProfilesTable)
+      .where(and(eq(clientProfilesTable.id, accountId), eq(clientProfilesTable.userId, userId)))
+      .limit(1);
+      
+    if (accountRows.length === 0) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    const meetings = await prisma.tarkieMeeting.findMany({
-      where: { clientProfileId: accountId, userId: session.user.id },
-      orderBy: { scheduledAt: "desc" },
-    });
+    const meetings = await db.select()
+      .from(tarkieMeetingsTable)
+      .where(and(
+        eq(tarkieMeetingsTable.clientProfileId, accountId),
+        eq(tarkieMeetingsTable.userId, userId)
+      ))
+      .orderBy(desc(tarkieMeetingsTable.scheduledAt));
 
-    // Fetch attendee counts separately (libsql adapter - no include)
+    // Fetch attendee counts
     const meetingIds = meetings.map((m: any) => m.id);
     const attendees = meetingIds.length > 0
-      ? await prisma.meetingAttendee.findMany({ where: { meetingId: { in: meetingIds } } })
+      ? await db.select({ meetingId: meetingAttendeesTable.meetingId })
+          .from(meetingAttendeesTable)
+          .where(inArray(meetingAttendeesTable.meetingId, meetingIds))
       : [];
 
     const countByMeeting: Record<string, number> = {};

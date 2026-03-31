@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { globalSettings as globalSettingsTable } from "@/db/schema";
 import { auth } from "@/auth";
 
 export async function GET() {
   try {
-    const settings = await prisma.$queryRawUnsafe(`SELECT * FROM GlobalSetting`) as any[];
+    const settings = await db.select().from(globalSettingsTable);
     const config: Record<string, string> = {
       app_name: "CST FlowDesk",
       company_name: "Tarkie",
@@ -15,6 +16,7 @@ export async function GET() {
     });
     return NextResponse.json(config);
   } catch (error: any) {
+    console.error("GET /api/admin/settings error:", error);
     return NextResponse.json({
       app_name: "CST FlowDesk",
       company_name: "Tarkie"
@@ -35,13 +37,19 @@ export async function PATCH(req: Request) {
     // 1. Process BATCH updates {settings: {key1: val1, key2: val2}}
     if (body.settings) {
       for (const [key, value] of Object.entries(body.settings)) {
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO GlobalSetting (id, [key], value) VALUES (?, ?, ?) 
-           ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
-          `set_${key}_${Math.random().toString(36).substring(7)}`, 
-          key, 
-          String(value)
-        );
+        await db.insert(globalSettingsTable)
+          .values({
+            id: `set_${key}_${Math.random().toString(36).substring(7)}`,
+            key,
+            value: String(value),
+          })
+          .onConflictDoUpdate({
+            target: globalSettingsTable.key,
+            set: { 
+              value: String(value),
+              updatedAt: new Date().toISOString()
+            },
+          });
         results.push({ key, value });
       }
       return NextResponse.json({ success: true, results });
@@ -50,13 +58,19 @@ export async function PATCH(req: Request) {
     // 2. Process SINGLE updates {key, value}
     const { key, value } = body;
     if (key) {
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO GlobalSetting (id, [key], value) VALUES (?, ?, ?) 
-         ON CONFLICT([key]) DO UPDATE SET value = excluded.value`,
-        `set_${key}_${Math.random().toString(36).substring(7)}`, 
-        key, 
-        String(value)
-      );
+      await db.insert(globalSettingsTable)
+        .values({
+          id: `set_${key}_${Math.random().toString(36).substring(7)}`,
+          key,
+          value: String(value),
+        })
+        .onConflictDoUpdate({
+          target: globalSettingsTable.key,
+          set: { 
+            value: String(value),
+            updatedAt: new Date().toISOString()
+          },
+        });
       return NextResponse.json({ key, value });
     }
 

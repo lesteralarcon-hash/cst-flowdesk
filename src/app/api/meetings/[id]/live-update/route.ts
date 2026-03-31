@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { db } from '@/db';
+import { 
+  tarkieMeetings as tarkieMeetingsTable, 
+  skills as skillsTable 
+} from '@/db/schema';
 import { auth } from '@/auth';
+import { eq, and, inArray } from 'drizzle-orm';
 import { getModelForApp, getStoredApiKey } from '@/lib/ai';
 
 const TARKIE_INTEGRITY_RULE = `
@@ -9,9 +14,7 @@ IMPORTANT: "Tarkie" is our product name. Never mishear or transcribe it as "Turk
 
 /**
  * POST /api/meetings/[id]/live-update
- *
- * Called every ~20 seconds during a live meeting to update a specific
- * AI panel (minutes or brd) based on newly transcribed speech.
+ * MIGRATED TO DRIZZLE
  */
 export async function POST(
   request: NextRequest,
@@ -22,7 +25,8 @@ export async function POST(
 
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -41,22 +45,19 @@ export async function POST(
     }
 
     // Verify meeting ownership
-    const meeting = await prisma.tarkieMeeting.findFirst({
-      where: { id: meetingId, userId: session.user.id },
-    });
-    if (!meeting) {
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(and(eq(tarkieMeetingsTable.id, meetingId), eq(tarkieMeetingsTable.userId, userId))).limit(1);
+    if (meetingRows.length === 0) {
       return NextResponse.json({ error: 'Meeting not found' }, { status: 404 });
     }
 
     // Fetch relevant skills from DB
-    const skills = await prisma.skill.findMany({
-      where: {
-        slug: { in: ['live-brd', 'live-minutes'] },
-        isActive: true
-      }
-    });
-    const brdSkill = skills.find(s => s.slug === 'live-brd')?.content || '';
-    const minutesSkill = skills.find(s => s.slug === 'live-minutes')?.content || '';
+    const skillsRows = await db.select().from(skillsTable).where(and(
+      inArray(skillsTable.slug, ['live-brd', 'live-minutes']),
+      eq(skillsTable.isActive, true)
+    ));
+    
+    const brdSkill = skillsRows.find(s => s.slug === 'live-brd')?.content || '';
+    const minutesSkill = skillsRows.find(s => s.slug === 'live-minutes')?.content || '';
 
     const apiKey = await getStoredApiKey();
     const model = await getModelForApp("meetings");

@@ -1,82 +1,65 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { users as usersTable } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-/* ─── PATCH /api/users/[id] ─── update user ───
- * PRODUCTION-SAFE: 100% raw SQL with try/catch
+/** 
+ * PATCH /api/users/[id] — update user 
+ * MIGRATED TO DRIZZLE
  */
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
-    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const isAdmin = (session.user as any).role === "admin";
+    const currentUserId = session?.user?.id;
+    if (!currentUserId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    
+    const { id: targetUserId } = params;
+    const currentUserRole = (session.user as any).role;
+    const isAdmin = currentUserRole === "admin";
 
-    // Users can update their own name/image; admins can update anything
-    const isSelf = session.user.id === params.id;
+    // Users can update their own profile; admins can update anything
+    const isSelf = currentUserId === targetUserId;
     if (!isAdmin && !isSelf) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const body = await req.json();
-
-    const setClauses: string[] = [];
-    const values: any[] = [];
+    const updateData: any = {};
 
     // Fields any user can update about themselves
-    if (body.name !== undefined) { setClauses.push("name = ?"); values.push(body.name); }
-    if (body.image !== undefined) { setClauses.push("image = ?"); values.push(body.image); }
+    if (body.name !== undefined) updateData.name = body.name;
+    if (body.image !== undefined) updateData.image = body.image;
 
     // Admin-only fields
     if (isAdmin) {
-      if (body.role !== undefined) { setClauses.push("role = ?"); values.push(body.role); }
-      if (body.status !== undefined) { setClauses.push("status = ?"); values.push(body.status); }
-      if (body.profileRole !== undefined) { setClauses.push("profileRole = ?"); values.push(body.profileRole || null); }
-      if (body.canAccessArchitect !== undefined) { setClauses.push("canAccessArchitect = ?"); values.push(body.canAccessArchitect ? 1 : 0); }
-      if (body.canAccessBRD !== undefined) { setClauses.push("canAccessBRD = ?"); values.push(body.canAccessBRD ? 1 : 0); }
-      if (body.canAccessTimeline !== undefined) { setClauses.push("canAccessTimeline = ?"); values.push(body.canAccessTimeline ? 1 : 0); }
-      if (body.canAccessTasks !== undefined) { setClauses.push("canAccessTasks = ?"); values.push(body.canAccessTasks ? 1 : 0); }
-      if (body.canAccessCalendar !== undefined) { setClauses.push("canAccessCalendar = ?"); values.push(body.canAccessCalendar ? 1 : 0); }
-      if (body.canAccessMeetings !== undefined) { setClauses.push("canAccessMeetings = ?"); values.push(body.canAccessMeetings ? 1 : 0); }
-      if (body.canAccessAccounts !== undefined) { setClauses.push("canAccessAccounts = ?"); values.push(body.canAccessAccounts ? 1 : 0); }
-      if (body.canAccessSolutions !== undefined) { setClauses.push("canAccessSolutions = ?"); values.push(body.canAccessSolutions ? 1 : 0); }
+      if (body.role !== undefined) updateData.role = body.role;
+      if (body.status !== undefined) updateData.status = body.status;
+      if (body.profileRole !== undefined) updateData.profileRole = body.profileRole || null;
+      if (body.canAccessArchitect !== undefined) updateData.canAccessArchitect = !!body.canAccessArchitect;
+      if (body.canAccessBRD !== undefined) updateData.canAccessBRD = !!body.canAccessBRD;
+      if (body.canAccessTimeline !== undefined) updateData.canAccessTimeline = !!body.canAccessTimeline;
+      if (body.canAccessTasks !== undefined) updateData.canAccessTasks = !!body.canAccessTasks;
+      if (body.canAccessCalendar !== undefined) updateData.canAccessCalendar = !!body.canAccessCalendar;
+      if (body.canAccessMeetings !== undefined) updateData.canAccessMeetings = !!body.canAccessMeetings;
+      if (body.canAccessAccounts !== undefined) updateData.canAccessAccounts = !!body.canAccessAccounts;
+      if (body.canAccessSolutions !== undefined) updateData.canAccessSolutions = !!body.canAccessSolutions;
     }
 
-    if (!setClauses.length) return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    if (Object.keys(updateData).length === 0) return NextResponse.json({ error: "No fields to update" }, { status: 400 });
 
-    values.push(params.id);
-    await prisma.$executeRawUnsafe(
-      `UPDATE User SET ${setClauses.join(", ")} WHERE id = ?`,
-      ...values
-    );
+    await db.update(usersTable)
+      .set(updateData)
+      .where(eq(usersTable.id, targetUserId));
 
-    // Read back with only safe columns (avoids crash if profileRole/inviteToken don't exist)
-    const updated = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT * FROM User WHERE id = ?`, params.id
-    );
+    const updatedRows = await db.select().from(usersTable).where(eq(usersTable.id, targetUserId)).limit(1);
+    const user = updatedRows[0];
 
-    // Sanitize the response — provide fallbacks for potentially missing columns
-    const user = updated[0] || {};
-    const safeUser = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      image: user.image,
-      role: user.role || "user",
-      status: user.status || "approved",
-      profileRole: user.profileRole || null,
-      canAccessArchitect: user.canAccessArchitect ?? 0,
-      canAccessBRD: user.canAccessBRD ?? 0,
-      canAccessTimeline: user.canAccessTimeline ?? 0,
-      canAccessTasks: user.canAccessTasks ?? 1,
-      canAccessCalendar: user.canAccessCalendar ?? 1,
-      canAccessMeetings: user.canAccessMeetings ?? 0,
-      canAccessAccounts: user.canAccessAccounts ?? 0,
-      canAccessSolutions: user.canAccessSolutions ?? 0,
-      inviteToken: user.inviteToken || null,
-      invitedAt: user.invitedAt || null,
-    };
+    if (!user) {
+      return NextResponse.json({ error: "User not found after update" }, { status: 404 });
+    }
 
-    return NextResponse.json(safeUser);
+    return NextResponse.json(user);
   } catch (error: any) {
     console.error("PATCH /api/users/[id] error:", error);
     return NextResponse.json(
@@ -86,20 +69,28 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-/* ─── DELETE /api/users/[id] ─── block user (soft delete) ─── */
+/** 
+ * DELETE /api/users/[id] — block user (soft delete) 
+ * MIGRATED TO DRIZZLE
+ */
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await auth();
-    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const currentUserId = session?.user?.id;
+    if (!currentUserId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+    const { id: targetUserId } = params;
+
     // Prevent self-deletion
-    if (session.user.id === params.id) {
+    if (currentUserId === targetUserId) {
       return NextResponse.json({ error: "You cannot delete your own account" }, { status: 400 });
     }
 
     // Soft-delete: set status to blocked
-    await prisma.$executeRawUnsafe(`UPDATE User SET status = 'blocked' WHERE id = ?`, params.id);
+    await db.update(usersTable)
+      .set({ status: 'blocked' })
+      .where(eq(usersTable.id, targetUserId));
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

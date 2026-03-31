@@ -1,29 +1,37 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { clientProfiles as clientProfilesTable } from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, asc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/accounts
  * Lightweight account list for dropdowns and selectors
- * PRODUCTION-SAFE: Uses raw SQL to avoid Prisma schema-mismatch on Turso
+ * MIGRATED TO DRIZZLE
  */
 export async function GET() {
   try {
     const session = await auth();
-    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = session?.user?.id;
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    const accounts = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, companyName, industry, engagementStatus
-       FROM ClientProfile
-       WHERE userId = ?
-       ORDER BY companyName ASC`,
-      session.user.id
-    );
+    const accounts = await db.select({
+      id: clientProfilesTable.id,
+      companyName: clientProfilesTable.companyName,
+      industry: clientProfilesTable.industry,
+      engagementStatus: clientProfilesTable.engagementStatus
+    })
+    .from(clientProfilesTable)
+    .where(eq(clientProfilesTable.userId, userId))
+    .orderBy(asc(clientProfilesTable.companyName));
 
     return NextResponse.json(accounts);
   } catch (error: any) {
+    console.error("Fetch accounts list error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

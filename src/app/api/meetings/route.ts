@@ -1,35 +1,43 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { db } from "@/db";
+import { 
+  tarkieMeetings as tarkieMeetingsTable, 
+  meetingAttendees as meetingAttendeesTable,
+  meetingPrepSessions as meetingPrepSessionsTable,
+  meetingAssignments as meetingAssignmentsTable,
+  users as usersTable
+} from "@/db/schema";
 import { auth } from "@/auth";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/meetings
- * Fetch all meetings for the current user
+ * MIGRATED TO DRIZZLE
  */
 export async function GET(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status");
 
-    const where: any = { userId: session.user.id };
-    if (status) where.status = status;
+    const conditions = [eq(tarkieMeetingsTable.userId, userId)];
+    if (status) conditions.push(eq(tarkieMeetingsTable.status, status));
 
-    // Fetch flat to avoid libsql include issues, then manually attach attendees
-    const meetings = await prisma.tarkieMeeting.findMany({
-      where,
-      orderBy: { scheduledAt: "desc" },
-    });
+    const meetings = await db.select()
+      .from(tarkieMeetingsTable)
+      .where(and(...conditions))
+      .orderBy(desc(tarkieMeetingsTable.scheduledAt));
 
     const meetingIds = meetings.map((m: any) => m.id);
     const allAttendees = meetingIds.length > 0
-      ? await prisma.meetingAttendee.findMany({ where: { meetingId: { in: meetingIds } } })
+      ? await db.select().from(meetingAttendeesTable).where(inArray(meetingAttendeesTable.meetingId, meetingIds))
       : [];
 
     const attendeesByMeeting: Record<string, any[]> = {};
@@ -51,12 +59,13 @@ export async function GET(req: Request) {
 
 /**
  * POST /api/meetings
- * Create a new meeting from a prep session
+ * MIGRATED TO DRIZZLE
  */
 export async function POST(req: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = session?.user?.id;
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -76,14 +85,12 @@ export async function POST(req: Request) {
       preRegisteredAttendees,
       assignedIds,
       plannedStartTime,
-      plannedEndTime,
     } = body;
 
     // Resolve meetingType + clientProfileId from prep session if not provided
     if (meetingPrepSessionId && (!meetingType || !clientProfileId)) {
-      const prep = await prisma.meetingPrepSession.findUnique({
-        where: { id: meetingPrepSessionId },
-      });
+      const prepRows = await db.select().from(meetingPrepSessionsTable).where(eq(meetingPrepSessionsTable.id, meetingPrepSessionId)).limit(1);
+      const prep = prepRows[0];
       if (!meetingType) meetingType = prep?.meetingType;
       if (!clientProfileId) clientProfileId = prep?.clientProfileId;
     }
@@ -110,110 +117,94 @@ export async function POST(req: Request) {
       }
     }
 
-    // Detach any existing meeting linked to this prep session (unique constraint)
-    if (meetingPrepSessionId) {
-      await prisma.$executeRawUnsafe(
-        `UPDATE TarkieMeeting SET meetingPrepSessionId = NULL WHERE meetingPrepSessionId = ?`,
-        meetingPrepSessionId
-      );
-    }
-
-    // Insert meeting using raw SQL (avoids nested create issues with libsql)
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO TarkieMeeting (
-        id, userId, meetingPrepSessionId, clientProfileId, projectId, createdBy,
-        title, companyName, meetingType, scheduledAt, durationMinutes,
-        zoomLink, qrCode, status,
-        activeApps,
-        customAgenda,
-        recordingEnabled, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      meetingId,
-      session.user!.id,
-      meetingPrepSessionId || null,
-      clientProfileId || null,
-      projectId || null,
-      session.user!.id,
-      title,
-      companyName || null,
-      meetingType,
-      scheduledISO,
-      durationMinutes || 60,
-      zoomLink || null,
-      qrCode,
-      "scheduled",
-      JSON.stringify(activeApps || []),
-      customAgenda || null,
-      1,
-      now,
-      now
-    );
-
-    // Persist assignments (Team Members)
-    if (assignedIds && Array.isArray(assignedIds)) {
-      for (const uid of assignedIds) {
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO MeetingAssignment (id, meetingId, userId) VALUES (?, ?, ?)`,
-          `ma_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
-          meetingId,
-          uid
-        );
-      }
-    }
-
-    // Insert pre-registered attendees one by one
     const attendees: any[] = [];
-    for (const attendee of preRegisteredAttendees || []) {
-      const attendeeId = `att_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO MeetingAttendee (
-          id, meetingId, fullName, position, companyName, mobileNumber, email,
-          registrationType, attendanceStatus, consentGiven, createdAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        attendeeId,
-        meetingId,
-        attendee.fullName,
-        attendee.position || null,
-        attendee.companyName || null,
-        attendee.mobileNumber || null,
-        attendee.email || null,
-        "pre-registered",
-        "expected",
-        0,
-        now
-      );
-      attendees.push({ id: attendeeId, meetingId, ...attendee, registrationType: "pre-registered", attendanceStatus: "expected" });
-    }
 
-    // AUTO-REGISTER Team Assignments as Attendees
-    if (assignedIds && Array.isArray(assignedIds)) {
-      const users = await prisma.user.findMany({ 
-        where: { id: { in: assignedIds } },
-        select: { id: true, name: true, email: true }
-      });
-      for (const u of users) {
-        // Skip if already pre-registered by email
-        if (preRegisteredAttendees?.some((pa: any) => pa.email === u.email)) continue;
-        
-        const attendeeId = `att_team_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO MeetingAttendee (
-            id, meetingId, fullName, email, registrationType, attendanceStatus, createdAt
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          attendeeId,
-          meetingId,
-          u.name || "Team Member",
-          u.email,
-          "team-assigned",
-          "expected",
-          now
-        );
-        attendees.push({ id: attendeeId, meetingId, fullName: u.name, email: u.email, registrationType: "team-assigned", attendanceStatus: "expected" });
+    await db.transaction(async (tx) => {
+      // 1. Detach existing meeting linked to this prep session
+      if (meetingPrepSessionId) {
+        await tx.update(tarkieMeetingsTable)
+          .set({ meetingPrepSessionId: null })
+          .where(eq(tarkieMeetingsTable.meetingPrepSessionId, meetingPrepSessionId));
       }
-    }
 
-    // Fetch the created meeting to return canonical data
-    const meeting = await prisma.tarkieMeeting.findUnique({ where: { id: meetingId } });
+      // 2. Insert meeting
+      await tx.insert(tarkieMeetingsTable).values({
+        id: meetingId,
+        userId: userId,
+        meetingPrepSessionId: meetingPrepSessionId || null,
+        clientProfileId: clientProfileId || null,
+        projectId: projectId || null,
+        createdBy: userId,
+        title,
+        companyName: companyName || null,
+        meetingType,
+        scheduledAt: scheduledISO,
+        durationMinutes: durationMinutes || 60,
+        zoomLink: zoomLink || null,
+        qrCode,
+        status: "scheduled",
+        activeApps: JSON.stringify(activeApps || []),
+        customAgenda: customAgenda || null,
+        recordingEnabled: true,
+        createdAt: now,
+        updatedAt: now
+      });
+
+      // 3. Persist assignments (Team Members)
+      if (assignedIds && Array.isArray(assignedIds) && assignedIds.length > 0) {
+        const assignmentValues = assignedIds.map(uid => ({
+          id: `ma_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+          meetingId: meetingId,
+          userId: uid
+        }));
+        await tx.insert(meetingAssignmentsTable).values(assignmentValues);
+
+        // AUTO-REGISTER Team Assignments as Attendees
+        const teamUsers = await tx.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+          .from(usersTable)
+          .where(inArray(usersTable.id, assignedIds));
+          
+        for (const u of teamUsers) {
+          if (preRegisteredAttendees?.some((pa: any) => pa.email === u.email)) continue;
+          const attId = `att_team_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+          await tx.insert(meetingAttendeesTable).values({
+            id: attId,
+            meetingId,
+            fullName: u.name || "Team Member",
+            email: u.email,
+            registrationType: "team-assigned",
+            attendanceStatus: "expected",
+            createdAt: now
+          });
+          attendees.push({ id: attId, meetingId, fullName: u.name, email: u.email, registrationType: "team-assigned", attendanceStatus: "expected" });
+        }
+      }
+
+      // 4. Insert pre-registered attendees
+      if (preRegisteredAttendees && Array.isArray(preRegisteredAttendees) && preRegisteredAttendees.length > 0) {
+        for (const att of preRegisteredAttendees) {
+          const attId = `att_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+          await tx.insert(meetingAttendeesTable).values({
+            id: attId,
+            meetingId,
+            fullName: att.fullName,
+            position: att.position || null,
+            companyName: att.companyName || null,
+            mobileNumber: att.mobileNumber || null,
+            email: att.email || null,
+            registrationType: "pre-registered",
+            attendanceStatus: "expected",
+            consentGiven: false,
+            createdAt: now
+          });
+          attendees.push({ id: attId, meetingId, ...att, registrationType: "pre-registered", attendanceStatus: "expected" });
+        }
+      }
+    });
+
+    // Fetch final canonical data
+    const meetingRows = await db.select().from(tarkieMeetingsTable).where(eq(tarkieMeetingsTable.id, meetingId)).limit(1);
+    const meeting = meetingRows[0];
 
     return NextResponse.json({ ...meeting, attendees, qrValue: qrCode });
   } catch (error: any) {
