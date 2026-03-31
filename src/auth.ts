@@ -96,23 +96,27 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return true;
     },
     async jwt({ token, user }) {
-      if (user) {
+      if (user && !token.id) {
         token.id = user.id;
       }
       
-      // STABILITY: Re-verify Admin status on every token refresh
       const email = token.email?.toLowerCase().trim();
       const isAdmin = email && ADMIN_EMAILS.includes(email);
       
-      if (isAdmin) {
-        token.role = "admin";
-      } else if (user) {
-        // Only fetch from DB on first sign in if not a hardcoded admin
+      if (email) {
         try {
-          const dbUser = await prisma.user.findUnique({ where: { email: email as string } });
-          token.role = dbUser?.role || "user";
+          const dbUser = await prisma.user.findUnique({ where: { email } });
+          if (dbUser) {
+            token.id = dbUser.id;
+            token.role = dbUser.role;
+            if (isAdmin && dbUser.role !== "admin") {
+              token.role = "admin";
+            }
+          } else if (isAdmin) {
+             token.role = "admin";
+          }
         } catch {
-          token.role = "user";
+          token.role = isAdmin ? "admin" : "user";
         }
       }
       return token;
