@@ -14,14 +14,20 @@ export async function POST() {
   if ((session.user as any).role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   let cfg: Record<string, any> = {};
+  let appName = "Team OS";
+
   try {
-    const raw = await fs.readFile(SETTINGS_FILE, "utf-8");
-    cfg = JSON.parse(raw);
-  } catch {}
+    const { prisma } = await import("@/lib/prisma");
+    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
+    settings.forEach(s => { cfg[s.key] = s.value; });
+    appName = cfg.app_name || appName;
+  } catch (err) {
+    console.warn("Could not read from DB in test-email:", err);
+  }
 
   const host   = cfg.smtpHost   || process.env.SMTP_HOST;
   const port   = parseInt(cfg.smtpPort || process.env.SMTP_PORT || "587");
-  const secure = cfg.smtpSecure != null ? cfg.smtpSecure : (process.env.SMTP_SECURE === "true");
+  const secure = cfg.smtpSecure === "true" || process.env.SMTP_SECURE === "true";
   const user   = cfg.smtpUser   || process.env.SMTP_USER;
   const pass   = cfg.smtpPass   || process.env.SMTP_PASS;
   const from   = cfg.smtpFrom   || process.env.SMTP_FROM || user;
@@ -31,13 +37,6 @@ export async function POST() {
     return NextResponse.json({ error: "SMTP not configured. Fill in Host, Username, and Password." }, { status: 400 });
   }
 
-  // Fetch dynamic branding
-  let appName = "Team OS";
-  try {
-    const { prisma } = await import("@/lib/prisma");
-    const setting = await (prisma as any).globalSetting.findUnique({ where: { key: "app_name" } });
-    if (setting?.value) appName = setting.value;
-  } catch {}
 
   try {
     const transport = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });

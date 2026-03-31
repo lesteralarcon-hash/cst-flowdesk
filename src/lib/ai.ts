@@ -32,10 +32,12 @@ export async function readAIConfig(): Promise<AIConfig> {
     };
   }
 
-  // 2. Fall back to config.json (Local Dev)
+  // 2. Fetch from Database (GlobalSetting table)
   try {
-    const data = await fs.readFile(SETTINGS_FILE, "utf-8");
-    const raw = JSON.parse(data);
+    const { prisma } = await import("./prisma");
+    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
+    const raw: Record<string, string> = {};
+    settings.forEach(s => { raw[s.key] = s.value; });
 
     // Backwards compat: if only legacy apiKey exists, detect provider from it
     if (!raw.primaryProvider && raw.apiKey) {
@@ -52,7 +54,7 @@ export async function readAIConfig(): Promise<AIConfig> {
     }
 
     return {
-      primaryProvider: raw.primaryProvider || "groq",
+      primaryProvider: (raw.primaryProvider || "groq") as any,
       ollamaEndpoint: raw.ollamaEndpoint || "http://localhost:11434",
       ollamaModel: raw.ollamaModel || "llama3.2",
       groqApiKey: raw.groqApiKey || "",
@@ -60,7 +62,8 @@ export async function readAIConfig(): Promise<AIConfig> {
       anthropicApiKey: raw.anthropicApiKey || "",
       apiKey: raw.apiKey,
     };
-  } catch {
+  } catch (error) {
+    console.error("AI Config DB fetch error:", error);
     return {
       primaryProvider: "groq",
       ollamaEndpoint: "http://localhost:11434",

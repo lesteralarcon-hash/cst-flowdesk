@@ -29,17 +29,19 @@ async function getGlobalSettings() {
 }
 
 
-/* ─── SMTP config: config.json > env vars ────────────────────── */
+/* ─── SMTP config: GlobalSetting DB > env vars ────────────────────── */
 async function getSmtpConfig() {
-  let cfg: Record<string, any> = {};
+  const cfg: Record<string, any> = {};
   try {
-    const raw = await fs.readFile(SETTINGS_FILE, "utf-8");
-    cfg = JSON.parse(raw);
-  } catch {}
+    const settings = await prisma.$queryRawUnsafe<any[]>(`SELECT * FROM GlobalSetting`);
+    settings.forEach(s => { cfg[s.key] = s.value; });
+  } catch (err) {
+    console.warn("SMTP config read error:", err);
+  }
   return {
     host:   cfg.smtpHost   || process.env.SMTP_HOST   || "smtp.gmail.com",
     port:   parseInt(cfg.smtpPort || process.env.SMTP_PORT || "587"),
-    secure: cfg.smtpSecure != null ? cfg.smtpSecure : (process.env.SMTP_SECURE === "true"),
+    secure: cfg.smtpSecure === "true" || process.env.SMTP_SECURE === "true",
     user:   cfg.smtpUser   || process.env.SMTP_USER,
     pass:   cfg.smtpPass   || process.env.SMTP_PASS,
     from:   cfg.smtpFrom   || process.env.SMTP_FROM || cfg.smtpUser || process.env.SMTP_USER || "noreply@tarkie.app",
