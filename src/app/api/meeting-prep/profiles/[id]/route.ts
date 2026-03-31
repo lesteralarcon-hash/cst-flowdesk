@@ -57,11 +57,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
     // Read back with raw SQL
     const updated = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, userId, companyName, industry, companySize,
-              modulesAvailed, engagementStatus, primaryContact,
-              primaryContactEmail, specialConsiderations,
-              createdAt, updatedAt
-       FROM ClientProfile WHERE id = ?`,
+      `SELECT * FROM ClientProfile WHERE id = ?`,
       params.id
     );
 

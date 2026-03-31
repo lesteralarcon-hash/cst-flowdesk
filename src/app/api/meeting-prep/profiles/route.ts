@@ -16,15 +16,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // RAW SQL: Avoid Prisma ORM findMany which references ALL schema columns
+    // RAW SQL: Use SELECT * to avoid crash on missing columns
     const profiles = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT cp.id, cp.userId, cp.companyName, cp.industry, cp.companySize,
-              cp.modulesAvailed, cp.engagementStatus, cp.primaryContact,
-              cp.primaryContactEmail, cp.specialConsiderations,
-              cp.createdAt, cp.updatedAt
-       FROM ClientProfile cp
-       WHERE cp.userId = ?
-       ORDER BY cp.createdAt DESC`,
+      `SELECT * FROM ClientProfile WHERE userId = ? ORDER BY createdAt DESC`,
       session.user.id
     );
 
@@ -135,13 +129,9 @@ export async function POST(req: Request) {
       now
     );
 
-    // Read back with raw SQL instead of Prisma ORM findUnique
+    // Read back with raw SQL — use SELECT * for safety
     const created = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT id, userId, companyName, industry, companySize,
-              modulesAvailed, engagementStatus, primaryContact,
-              primaryContactEmail, specialConsiderations,
-              createdAt, updatedAt
-       FROM ClientProfile WHERE id = ?`,
+      `SELECT * FROM ClientProfile WHERE id = ?`,
       id
     );
 
