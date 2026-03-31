@@ -85,7 +85,7 @@ export async function GET() {
       const apps = [
         { name: "Architect", slug: "architect", description: "Map and automate operational flows.", icon: "Workflow", href: "/architect", sortOrder: 0 },
         { name: "BRD Maker", slug: "brd", description: "Generate PRD / BRD documents via AI.", icon: "ClipboardList", href: "/brd", sortOrder: 1 },
-        { name: "Roadmap", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", sortOrder: 2 },
+        { name: "Timeline Maker", slug: "timeline", description: "Project scheduling and Gantt visualization.", icon: "Clock", href: "/timeline", sortOrder: 2 },
         { name: "Mockup Builder", slug: "mockup", description: "Build and preview UI prototypes.", icon: "Paintbrush", href: "/mockup", sortOrder: 3 },
         { name: "Daily Tasks", slug: "tasks", description: "Daily task tracking and reporting.", icon: "Zap", href: "/tasks", sortOrder: 4 },
         { name: "Meetings Hub", slug: "meetings", description: "Centralized meeting and transcription management.", icon: "Users", href: "/meetings", sortOrder: 5 },

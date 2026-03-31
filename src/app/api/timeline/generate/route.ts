@@ -59,10 +59,12 @@ ${JSON.stringify(tasks, null, 2)}
       const cleanJson = text.replace(/```json/i, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanJson);
       return NextResponse.json(parsed);
-    } catch {
-      return NextResponse.json({ error: "Timeline payload was not valid JSON. " + text }, { status: 500 });
+    } catch (parseErr) {
+      console.error("Timeline Parse Error:", parseErr, "Raw Text:", text);
+      return NextResponse.json({ error: "Timeline payload was not valid JSON. Check server logs." }, { status: 500 });
     }
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || "Failed" }, { status: 500 });
+    console.error("Timeline Generation Root Error:", error);
+    return NextResponse.json({ error: `AI Generation Failed: ${error.message}` }, { status: 500 });
   }
 }

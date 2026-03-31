@@ -2,6 +2,7 @@ import LeftNav from "@/components/layout/LeftNav";
 import GlobalBar from "@/components/layout/GlobalBar";
 import { auth } from "@/auth";
 import { BreadcrumbProvider } from "@/lib/contexts/BreadcrumbContext";
+import { Suspense } from "react";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -9,7 +10,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <BreadcrumbProvider>
       <div className="page-shell">
-        {session && <LeftNav />}
+        {session && (
+          <Suspense fallback={<div className="left-nav" />}>
+            <LeftNav />
+          </Suspense>
+        )}
         <div className={session ? "page-content" : "page-content-full"}>
           <GlobalBar />
           {children}

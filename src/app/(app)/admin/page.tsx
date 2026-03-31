@@ -120,6 +120,7 @@ export default function AdminSettings() {
   const [brandingLoading, setBrandingLoading] = useState(true);
   const [brandingSaving, setBrandingSaving] = useState(false);
   const [brandingStatus, setBrandingStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [appStatus, setAppStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/admin/settings")
@@ -249,8 +250,13 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
         }),
       });
       setEditingApp(null);
+      setAppStatus({ type: "success", message: "App updated successfully!" });
+      setTimeout(() => setAppStatus(null), 5000);
       await loadApps();
-    } catch {}
+    } catch (error: any) {
+      setAppStatus({ type: "error", message: error.message });
+      setTimeout(() => setAppStatus(null), 5000);
+    }
     setAppSaving(false);
   };
 
@@ -1097,6 +1103,14 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <div>
                     <h3 className="font-bold text-xl flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" /> App Builder</h3>
                     <p className="text-sm text-muted-foreground mt-0.5">Manage AI apps available in the system. Each app&apos;s slug maps to its Skills (category = slug).</p>
+                    {appStatus && (
+                      <div className={`mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium animate-in fade-in slide-in-from-top-1 ${
+                        appStatus.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+                      }`}>
+                        {appStatus.type === "success" ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
+                        {appStatus.message}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={handleSeedApps} disabled={appSeeding}

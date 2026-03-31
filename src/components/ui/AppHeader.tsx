@@ -20,7 +20,7 @@ const APPS = [
   { id: "explore", label: "Explore", href: "/", icon: <Compass className="w-4 h-4" />, color: "text-blue-500" },
   { id: "architect", label: "Architect", href: "/architect", icon: <GitBranch className="w-4 h-4" />, color: "text-indigo-500" },
   { id: "brd", label: "BRD Maker", href: "/brd", icon: <FileText className="w-4 h-4" />, color: "text-emerald-500" },
-  { id: "roadmap", label: "Roadmap", href: "/timeline", icon: <Clock className="w-4 h-4" />, color: "text-violet-500" },
+  { id: "roadmap", label: "Timeline Maker", href: "/timeline", icon: <Clock className="w-4 h-4" />, color: "text-violet-500" },
   { id: "tasks", label: "Task Control", href: "/tasks", icon: <Zap className="w-4 h-4" />, color: "text-amber-500" },
   { id: "admin", label: "Admin", href: "/admin", icon: <ShieldCheck className="w-4 h-4" />, color: "text-slate-500" },
 ];

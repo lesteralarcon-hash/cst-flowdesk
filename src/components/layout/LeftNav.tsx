@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import {
   ChevronLeft, ChevronRight, ChevronDown,
@@ -38,6 +38,7 @@ export default function LeftNav() {
   const [appName, setAppName] = useState<string>("Team OS");
   const [mounted, setMounted] = useState(false);
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { data: session, status } = useSession();
 
   const isAiAppActive = aiApps.some(a => pathname?.startsWith(a.href));
@@ -70,10 +71,9 @@ export default function LeftNav() {
 
   // Read active project from URL after mount / navigation
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const proj = params.get("project");
+    const proj = searchParams?.get("project");
     setActiveProjectId(proj ? proj : pathname?.startsWith("/tasks") ? "DASHBOARD" : "ALL");
-  }, [pathname]);
+  }, [pathname, searchParams]);
 
   // Fetch projects when entering tasks section
   useEffect(() => {
