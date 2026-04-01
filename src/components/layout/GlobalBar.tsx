@@ -1,10 +1,11 @@
 "use client";
 
 import React from "react";
-import { Bell, ChevronDown } from "lucide-react";
+import { Bell, ChevronDown, Search, ArrowRight } from "lucide-react";
 import UserButton from "@/components/auth/UserButton";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import Link from "next/link";
+import CommandK from "@/components/ui/CommandK";
 
 interface GlobalBarProps {
   breadcrumbs?: { label: string; href?: string }[];
@@ -48,6 +49,20 @@ export default function GlobalBar({
       <div className="nav-bar-right">
         {actions}
         <div className="h-4 w-px bg-slate-100 mx-1" />
+        
+        {/* Search / Command K Trigger */}
+        <button 
+          className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-400 font-bold transition-all border border-slate-100"
+          title="Search (CMD+K)"
+          onClick={() => {
+            const event = new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true });
+            window.dispatchEvent(event);
+          }}
+        >
+           <Search className="w-3.5 h-3.5" />
+           <span className="text-[10px] uppercase tracking-tighter hidden md:inline">Quick Search</span>
+        </button>
+
         <button
           className="p-1.5 rounded-xl hover:bg-surface-muted transition-colors text-text-secondary hover:text-text-primary relative"
           title="Notifications"
@@ -57,6 +72,7 @@ export default function GlobalBar({
         </button>
         <UserButton />
       </div>
+      <CommandK />
     </div>
   );
 }
