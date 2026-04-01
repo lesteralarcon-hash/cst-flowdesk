@@ -28,19 +28,18 @@ export async function POST(req: Request) {
           <meta charset="utf-8">
           <title>${title}</title>
           <style>
-            body { font-family: 'Arial', sans-serif; line-height: 1.6; color: #333; }
-            h1, h2, h3 { color: #1e293b; margin-top: 24px; margin-bottom: 12px; }
+            body { font-family: Arial, Helvetica, sans-serif !important; line-height: 1.6; color: #333; }
+            h1, h2, h3 { font-family: Arial, sans-serif; color: #1e293b; margin-top: 24px; margin-bottom: 12px; }
             h1 { border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
-            p { margin-bottom: 14px; }
-            ul, ol { margin-bottom: 16px; padding-left: 24px; }
-            li { margin-bottom: 6px; }
-            table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+            p { font-family: Arial, sans-serif; margin-bottom: 14px; }
+            ul, ol { font-family: Arial, sans-serif; margin-bottom: 16px; padding-left: 24px; }
+            li { font-family: Arial, sans-serif; margin-bottom: 6px; }
+            table { font-family: Arial, sans-serif; border-collapse: collapse; width: 100%; margin-bottom: 20px; }
             th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; }
             th { background-color: #f1f5f9; font-weight: bold; }
-            code { background-color: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-family: monospace; }
           </style>
         </head>
-        <body>
+        <body style="font-family: Arial, sans-serif;">
           ${headerHTML}
           ${htmlString}
         </body>
@@ -52,6 +51,7 @@ export async function POST(req: Request) {
       table: { row: { cantSplit: true } },
       footer: true,
       pageNumber: true,
+      font: 'Arial', // Explicitly specify font for the converter
     });
 
     // Return as a downloadable DOCX file

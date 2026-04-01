@@ -11,6 +11,16 @@ interface Attachment {
   data: string; // base64
 }
 
+const DOCUMENT_STANDARDS = `
+DOCUMENT STANDARDS (MANDATORY):
+1. HEADER: The title must ALWAYS be the COMPLETE project title as an H1 (# Title).
+2. REVISION HISTORY: Add a "Revision History" table immediately after the title but before the Executive Summary.
+   Columns: Revision | Date | Description | Status
+   Fill with "Revision 0 | [CURRENT_DATE] | Initial BRD draft based on requirements | Issued"
+3. TARKIE ECOSYSTEM: Always segment requirements for "Field App", "Dashboard", and "Manager App".
+4. DATES: Use the provided current date for any date fields.
+`.trim();
+
 const CONVERSATION_GUARDRAIL = `
 CRITICAL BEHAVIOR RULE: 
 - If this is the start of a project or a new feature request, DO NOT generate a full BRD yet.
@@ -19,21 +29,21 @@ CRITICAL BEHAVIOR RULE:
 - Only generate the "STEP 5 — GENERATE BRD DRAFT" once you have enough details about the Field App, Dashboard, and Manager App capabilities.
 `.trim();
 
-/** 
- * POST /api/brd/generate 
- * MIGRATED TO DRIZZLE
- */
 export async function POST(req: Request) {
   try {
     const { prompt, messages, systemInstruction, attachments } = await req.json();
+    const currentDate = new Date().toLocaleDateString("en-US", { 
+      day: 'numeric', 
+      month: 'long', 
+      year: 'numeric' 
+    });
+
     if (!prompt && (!messages || messages.length === 0)) {
-      return NextResponse.json({ error: "Prompt or messages required" }, { status: 400 });
+      return NextResponse.json({ error: "Prompt required" }, { status: 400 });
     }
 
-    // Always use Claude for BRD (best at complex business logic and vision)
     const model = await getClaudeModel();
 
-    // Fetch the active BRD skill from the database (your "360 Ecosystem" prompt)
     let dbSkill = "";
     try {
       const skills = await db.select()
@@ -44,32 +54,37 @@ export async function POST(req: Request) {
       
       if (skills.length > 0) dbSkill = skills[0].content;
     } catch (dbErr) {
-      console.error("Failed to fetch BRD skill from DB:", dbErr);
+      console.error("Failed to fetch BRD skill:", dbErr);
     }
 
-    const fallbackInstruction = `You are a Senior Business Analyst creating a BRD. Ensure you cover the Tarkie 360 ecosystem: Field App, Dashboard, and Manager App.`;
+    const fallbackInstruction = `You are a Senior Business Analyst. Create professional BRDs including Field App, Dashboard, and Manager App specs.`;
     const baseInstruction = dbSkill || systemInstruction || fallbackInstruction;
     
-    // Inject the conversational guardrail to prevent premature generation
-    const finalSystemInstruction = `${baseInstruction}\n\n---\n${CONVERSATION_GUARDRAIL}`;
+    // Inject the new document standards and real-time date
+    const finalSystemInstruction = `
+      ${baseInstruction}
+      
+      CURRENT DATE: ${currentDate}
+      
+      ---
+      ${DOCUMENT_STANDARDS}
+      
+      ---
+      ${CONVERSATION_GUARDRAIL}
+    `.trim();
 
     const attachmentList: Attachment[] = Array.isArray(attachments) ? attachments : [];
-
-    // Pre-process Word files (docx)
     const docTexts: string[] = [];
     for (const att of attachmentList) {
       if (att.mimeType.includes("wordprocessingml") || att.mimeType === "application/msword") {
         try {
           const buffer = Buffer.from(att.data, "base64");
           const { value } = await mammoth.extractRawText({ buffer });
-          docTexts.push(`Content of attached document "${att.name}":\n${value}`);
-        } catch (err) {
-          console.error(`Mammoth error on ${att.name}:`, err);
-        }
+          docTexts.push(`[Attached Doc: ${att.name}]\n${value}`);
+        } catch (err) {}
       }
     }
 
-    // Inline attachments (Images and PDFs)
     const inlineAttachments = attachmentList.filter(
       a => a.mimeType.startsWith("image/") || a.mimeType === "application/pdf"
     );
@@ -81,22 +96,13 @@ export async function POST(req: Request) {
         const isLast = i === messages.length - 1;
         const parts: any[] = [{ text: m.content }];
 
-        // On the last user message, attach visual/doc data
         if (isLast && m.role === "user") {
-          // Add Word text
-          if (docTexts.length > 0) {
-            parts[0].text += "\n\n" + docTexts.join("\n\n");
-          }
-          // Add Inline data (Images/PDFs)
+          if (docTexts.length > 0) parts[0].text += "\n\n" + docTexts.join("\n\n");
           for (const att of inlineAttachments) {
             parts.push({ inlineData: { mimeType: att.mimeType, data: att.data } });
           }
         }
-
-        requestContents.push({
-          role: m.role === "model" ? "model" : "user",
-          parts
-        });
+        requestContents.push({ role: m.role === "model" ? "model" : "user", parts });
       }
     } else {
       const parts: any[] = [{ text: prompt }];
@@ -112,11 +118,9 @@ export async function POST(req: Request) {
       systemInstruction: { role: "system", parts: [{ text: finalSystemInstruction }] },
     });
 
-    const text = result.response.text();
-
-    return NextResponse.json({ content: text });
+    return NextResponse.json({ content: result.response.text() });
   } catch (error: any) {
-    console.error("Error generating BRD:", error);
-    return NextResponse.json({ error: error.message || "Failed to generate BRD" }, { status: 500 });
+    console.error("BRD Generation error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

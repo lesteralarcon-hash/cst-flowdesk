@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Sparkles, FolderOpen, X, Command, ChevronRight, Zap, Building2 } from "lucide-react";
+import { Search, Sparkles, FolderOpen, X, Command, ChevronRight, Zap, Building2, ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export default function CommandK() {

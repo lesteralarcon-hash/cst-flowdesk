@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, Suspense, useRef } from "react";
+import { useState, useEffect, Suspense, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import SmartMic from "@/components/ui/SmartMic";
-import { ArrowUp, Loader2, Download, Copy, Check, Save, FileText, Paperclip, X } from "lucide-react";
+import { ArrowUp, Loader2, Download, Copy, Check, Save, FileText, Paperclip, X, MessageSquare, Send, Sparkles } from "lucide-react";
 import AuthGuard from "@/components/auth/AuthGuard";
 
 export default function BRDPage() {
@@ -29,60 +29,31 @@ function BRDContent() {
   const [brdContent, setBrdContent] = useState("");
   const [copied, setCopied] = useState(false);
   const [exportingToDocx, setExportingToDocx] = useState(false);
+  
+  // Interactive Review States
+  const [comments, setComments] = useState<{ id: string; text: string; segmentIndex: number }[]>([]);
+  const [activeCommentIndex, setActiveCommentIndex] = useState<number | null>(null);
+  const [newComment, setNewComment] = useState("");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Read account context from query params (set when navigating from Accounts hub)
-  const accountId = searchParams.get("accountId");
-
-  // Auto-scroll chat
+  // Auto-resize chat textarea
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
-
-  // Load existing work if loadId is present
-  useEffect(() => {
-    const loadId = searchParams.get("loadId");
-    if (loadId && session?.user) {
-      fetch("/api/works/" + loadId).then(r => r.json()).then(data => {
-        if (data.data) { 
-          setBrdContent(data.data); 
-          setSavedId(data.id); 
-        }
-      }).catch(console.error);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
-  }, [searchParams, session]);
-
-  const saveToCloud = async () => {
-    if (!session?.user) { alert("Please sign in to save."); return; }
-    if (!brdContent) { alert("Generate a BRD first."); return; }
-    const title = messages[0]?.content?.slice(0, 60) || "Untitled BRD";
-    setSaving(true);
-    try {
-      const payload: any = { id: savedId, appType: "brd", title, data: brdContent };
-      if (accountId) payload.clientProfileId = accountId;
-      const res = await fetch("/api/works", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (res.ok) { setSavedId(data.id); alert("Saved to cloud!"); }
-      else alert("Save failed: " + data.error);
-    } catch (err: any) { alert("Error: " + err.message); }
-    finally { setSaving(false); }
-  };
+  }, [prompt]);
 
   const handleTranscription = (text: string) => {
     setPrompt((prev) => (prev ? prev + " " + text : text));
   };
 
-  // ── Attachment Handling ───────────────────────────────────────────────────
-
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-
     for (const file of files) {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -100,45 +71,15 @@ function BRDContent() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handlePaste = (e: React.ClipboardEvent) => {
-    const items = Array.from(e.clipboardData.items);
-    const images = items.filter(item => item.type.startsWith("image/"));
-    if (images.length === 0) return;
-
-    e.preventDefault();
-    images.forEach(item => {
-      const file = item.getAsFile();
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        const base64 = dataUrl.split(",")[1];
-        setPendingAttachments(prev => [...prev, {
-          name: `pasted-image-${Date.now()}.png`,
-          mimeType: file.type || "image/png",
-          data: base64,
-          preview: dataUrl
-        }]);
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const removeAttachment = (idx: number) => {
-    setPendingAttachments(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const generateBrd = async () => {
-    if (!prompt.trim() && pendingAttachments.length === 0) return;
+  const generateBrd = async (customPrompt?: string) => {
+    const finalPrompt = customPrompt || prompt;
+    if (!finalPrompt.trim() && pendingAttachments.length === 0) return;
     
-    // customInstruction stays for backwards compat, but server now fetches from DB
-    const customInstruction = localStorage.getItem("prompt_brd");
-
-    const userMessage = prompt;
+    const userMessage = finalPrompt;
     const attachmentNames = pendingAttachments.map(a => a.name);
     const newMessages: any[] = [...messages, { 
       role: "user", 
-      content: userMessage || (attachmentNames.length > 0 ? `[Attached: ${attachmentNames.join(", ")}]` : ""),
+      content: userMessage,
       attachmentNames: attachmentNames.length > 0 ? attachmentNames : undefined
     }];
     
@@ -155,29 +96,34 @@ function BRDContent() {
         body: JSON.stringify({ 
           prompt: userMessage, 
           messages: newMessages.map(m => ({ role: m.role, content: m.content })),
-          systemInstruction: customInstruction,
           attachments: currentAttachments.map(({ name, mimeType, data }) => ({ name, mimeType, data }))
         }),
       });
       const data = await res.json();
       if (res.ok && data.content) {
         setBrdContent(data.content);
-        setMessages([...newMessages, { role: "model", content: "I have updated the BRD document based on your latest instructions!" }]);
-      } else {
-        alert("Backend Error: " + (data.error || "Failed to generate BRD."));
+        setMessages([...newMessages, { role: "model", content: "I have updated the BRD document with your latest feedback!" }]);
+        setComments([]); // Clear comments after refinement
       }
-    } catch (err: any) {
-      console.error(err);
-      alert("Network Error: " + err.message);
+    } catch (err) {
+      alert("Error generating BRD.");
     } finally {
       setLoading(false);
     }
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(brdContent);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const refineWithComments = () => {
+    if (comments.length === 0) return;
+    const commentSummary = comments.map(c => `- Section ${c.segmentIndex + 1}: ${c.text}`).join("\n");
+    const refinePrompt = `Please refine the current BRD based on the following specific feedback:\n\n${commentSummary}`;
+    generateBrd(refinePrompt);
+  };
+
+  const addComment = () => {
+    if (!newComment.trim() || activeCommentIndex === null) return;
+    setComments([...comments, { id: Date.now().toString(), text: newComment, segmentIndex: activeCommentIndex }]);
+    setNewComment("");
+    setActiveCommentIndex(null);
   };
 
   const exportDocxFile = async () => {
@@ -190,8 +136,6 @@ function BRDContent() {
         body: JSON.stringify({ markdown: brdContent, title: "Business_Requirements_Document" }),
       });
       if (!res.ok) throw new Error("Export failed");
-      
-      // Download the returned blob
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -200,153 +144,173 @@ function BRDContent() {
       link.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
-      alert("Error generating DOCX: " + err.message);
+      alert("Export failed.");
     } finally {
       setExportingToDocx(false);
     }
   };
 
+  // Split content into segments for interactive commenting
+  const segments = brdContent.split("\n\n");
+
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
-      {/* Sidebar: Chat / Dictation Area */}
-      <div className="w-1/3 border-r bg-card flex flex-col shadow-lg z-10">
-        <div className="p-6 border-b">
-          <h1 className="text-2xl font-bold tracking-tight">BRD Maker</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Dictate process objectives and roles, and the AI will auto-write a full structured requirements document.
+    <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden bg-slate-50 font-inter">
+      {/* Sidebar: Chat Panel */}
+      <div className="w-[380px] border-r bg-white flex flex-col shadow-xl z-20 transition-all">
+        <div className="p-6 border-b shrink-0">
+          <div className="flex items-center gap-2 mb-1">
+             <div className="bg-primary text-white p-1 rounded-md shadow-sm"><FileText size={16}/></div>
+             <h1 className="text-xl font-bold tracking-tight text-slate-800">BRD AI Workspace</h1>
+          </div>
+          <p className="text-[11px] font-medium text-slate-400 uppercase tracking-widest mt-2">
+            The Tarkie Requirements Hub
           </p>
-          {session?.user && (
-            <button onClick={saveToCloud} disabled={saving || !brdContent} className="mt-2 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-primary hover:underline disabled:opacity-40">
-              <Save className="h-3 w-3" /> {saving ? "Saving..." : savedId ? "Update Cloud" : "Save to Cloud"}
-            </button>
-          )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-muted/30 flex flex-col">
-          <div className="bg-background shadow-sm border rounded-xl p-4 max-w-[85%] text-sm leading-relaxed self-start">
-            I am your Business Analyst. Tell me about the app or process you need to document, and I will write the BRD!
-          </div>
-
-          {messages.map((msg: any, idx) => (
-            <div key={idx} className={`flex flex-col gap-1 ${msg.role === "user" ? "items-end" : "items-start"}`}>
-              {msg.attachmentNames && (
-                <div className="flex flex-wrap gap-1 justify-end px-2">
-                  {msg.attachmentNames.map((name: string, i: number) => (
-                    <span key={i} className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[9px] font-medium border border-primary/20">
-                      <Paperclip className="w-2.5 h-2.5" /> {name}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div 
-                className={`p-4 text-sm leading-relaxed max-w-[85%] border shadow-sm ${msg.role === "user" ? "bg-primary text-primary-foreground rounded-2xl rounded-tr-sm" : "bg-background rounded-2xl rounded-tl-sm"}`}
-              >
-                {msg.content}
-              </div>
+        {/* Message History */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 styled-scroll bg-slate-50/30">
+          {messages.length === 0 && (
+             <div className="bg-primary/5 border border-primary/10 rounded-2xl p-6 text-sm text-slate-600 leading-relaxed">
+               Welcome! Tell me about the project, and I will generate the **BRD V.0** for you.
+             </div>
+          )}
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`flex flex-col gap-2 ${msg.role === "user" ? "items-end" : "items-start"}`}>
+               <div className={`p-4 text-[13px] leading-relaxed max-w-[90%] shadow-sm ${msg.role === "user" ? "bg-primary text-white rounded-2xl rounded-tr-sm" : "bg-white border rounded-2xl rounded-tl-sm text-slate-700"}`}>
+                 {msg.content}
+               </div>
             </div>
           ))}
-
           {loading && (
-             <div className="bg-primary/10 border border-primary/20 rounded-xl p-4 max-w-[85%] text-sm animate-pulse flex items-center gap-3 self-start">
-               <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
-               Drafting comprehensive business documents...
+             <div className="flex flex-col gap-2 items-start animate-pulse">
+                <div className="bg-white border rounded-2xl p-4 flex items-center gap-3 shadow-sm">
+                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                   <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Drafting intelligence...</span>
+                </div>
              </div>
           )}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area */}
-        <div className="p-4 border-t bg-background space-y-3">
+        {/* Input Area (Smart & Expandable) */}
+        <div className="p-4 border-t bg-white shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.03)]">
           {pendingAttachments.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 mb-3">
               {pendingAttachments.map((att, idx) => (
-                <div key={idx} className="flex items-center gap-1.5 pl-1.5 pr-1 py-1 rounded bg-muted border border-border-default text-[10px] text-text-secondary">
-                  {att.preview ? (
-                    <img src={att.preview} className="w-4 h-4 object-cover rounded" />
-                  ) : <FileText className="w-3.5 h-3.5" />}
-                  <span className="truncate max-w-[100px]">{att.name}</span>
-                  <button onClick={() => removeAttachment(idx)} className="p-0.5 hover:bg-surface-muted rounded text-text-secondary">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                <div key={idx} className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg bg-slate-50 border text-[10px] font-bold text-slate-500">
+                  <Paperclip className="w-3 h-3" /> <span className="truncate max-w-[80px]">{att.name}</span>
+                  <button onClick={() => setPendingAttachments(p => p.filter((_, i) => i !== idx))} className="hover:text-red-500"><X size={12}/></button>
                 </div>
               ))}
             </div>
           )}
 
-          <div className="relative">
+          <div className="relative group">
             <textarea
+              ref={textareaRef}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                 if (e.key === "Enter" && !e.shiftKey) {
-                   e.preventDefault();
-                   generateBrd();
-                 }
-              }}
-              onPaste={handlePaste}
-              rows={3}
-              placeholder="Describe goals, paste screenshot, or attach file..."
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); generateBrd(); }}}
+              placeholder="Suggest improvements or describe goals..."
               disabled={loading}
-              className="w-full rounded-2xl border bg-muted/30 pl-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 resize-none min-h-[50px]"
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:opacity-50 resize-none min-h-[50px] styled-scroll font-medium"
             />
             <button 
-              className="absolute right-2 bottom-2 h-9 w-9 flex items-center justify-center rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all shadow-md disabled:opacity-50" 
-              onClick={generateBrd}
+              className="absolute right-2 bottom-2 h-9 w-9 flex items-center justify-center rounded-xl bg-primary text-white hover:shadow-lg hover:translate-y-[-1px] active:translate-y-[0px] transition-all disabled:opacity-50" 
+              onClick={() => generateBrd()}
               disabled={loading || (!prompt.trim() && pendingAttachments.length === 0)}
             >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} />}
             </button>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between mt-3 px-1">
+            <div className="flex items-center gap-4">
               <SmartMic onTranscription={handleTranscription} disabled={loading} />
               <button 
                 onClick={() => fileInputRef.current?.click()}
                 disabled={loading}
-                className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary hover:text-primary transition-colors disabled:opacity-40"
+                className="flex items-center gap-1.5 text-[10px] font-black uppercase text-slate-400 hover:text-primary transition-colors"
               >
-                <Paperclip className="w-3.5 h-3.5" /> Attach File
+                <Paperclip size={14} /> Attach File
               </button>
               <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileChange} />
             </div>
+            {comments.length > 0 && (
+                <button onClick={refineWithComments} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[10px] font-black uppercase shadow-sm hover:bg-amber-600 transition-all">
+                   <Sparkles size={12}/> Refine with {comments.length} Comments
+                </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Main Document Area */}
-      <div className="flex-1 w-2/3 bg-slate-50 relative flex flex-col items-center py-8 overflow-y-auto">
-        {brdContent ? (
-          <div className="w-[85%] max-w-4xl bg-white shadow-lg border rounded-xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300">
-            {/* Toolbar */}
-            <div className="flex items-center justify-between border-b px-6 py-3 bg-slate-50/80 backdrop-blur top-0 sticky z-20">
-               <span className="font-semibold text-sm text-slate-600">Document Editor</span>
-               <div className="flex gap-2">
-                 <button onClick={copyToClipboard} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-slate-100 transition-colors">
-                   {copied ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />} 
-                   {copied ? "Copied!" : "Copy Markdown"}
-                 </button>
-                 <button onClick={exportDocxFile} disabled={exportingToDocx} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-slate-100 transition-colors disabled:opacity-50">
-                   {exportingToDocx ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5 text-blue-600" />} 
-                   {exportingToDocx ? "Exporting..." : "Export .docx"}
-                 </button>
-               </div>
-            </div>
-            {/* The editable document */}
-            <textarea
-              value={brdContent}
-              onChange={(e) => setBrdContent(e.target.value)}
-              className="w-full h-[600px] min-h-[max(calc(100vh-250px),_600px)] p-8 outline-none resize-none font-mono text-sm leading-relaxed text-slate-800 bg-white"
-            />
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-slate-400 opacity-60">
-             <div className="w-32 h-32 border-4 border-dashed rounded-xl mb-4 flex items-center justify-center">
-                <span className="font-mono text-4xl">BRD</span>
+      {/* Main Document Viewer (Collaborative Review) */}
+      <div className="flex-1 flex flex-col relative overflow-hidden bg-white/40 backdrop-blur-3xl">
+        <div className="h-14 border-b bg-white/80 backdrop-blur-md px-6 flex items-center justify-between z-10">
+           <div className="flex items-center gap-4">
+              <span className="font-bold text-sm text-slate-800 tracking-tight">Interactive BRD Editor</span>
+              <div className="h-4 w-px bg-slate-200" />
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Draft Mode v1.0
+              </div>
+           </div>
+           <div className="flex gap-2">
+             <button onClick={exportDocxFile} className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl hover:shadow-lg transition-all shadow-md">
+                <Download size={14}/> Export Arial .docx
+             </button>
+           </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-12 styled-scroll">
+           {brdContent ? (
+             <div className="w-full max-w-4xl mx-auto bg-white shadow-[0_32px_64px_rgba(0,0,0,0.08)] border border-slate-100 rounded-2xl p-16 relative">
+                {segments.map((segment, idx) => (
+                  <div 
+                    key={idx} 
+                    className="brd-segment group mb-4 text-slate-700 text-sm leading-relaxed whitespace-pre-wrap font-inter"
+                    onClick={() => setActiveCommentIndex(idx)}
+                  >
+                    <div className="brd-comment-marker"><MessageSquare size={14}/></div>
+                    {segment}
+                    
+                    {/* Inline Comment Box */}
+                    {activeCommentIndex === idx && (
+                      <div className="absolute left-0 right-0 top-full mt-2 brd-comment-box shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                         <div className="text-[10px] font-black uppercase text-slate-400 mb-2">Revision Note</div>
+                         <textarea 
+                           autoFocus
+                           className="w-full h-20 p-2 text-xs border rounded-lg focus:ring-1 focus:ring-primary outline-none"
+                           placeholder="What should be changed here?"
+                           value={newComment}
+                           onChange={e => setNewComment(e.target.value)}
+                         />
+                         <div className="flex justify-end gap-2 mt-2">
+                           <button onClick={() => setActiveCommentIndex(null)} className="text-[10px] font-bold text-slate-400 px-2">Cancel</button>
+                           <button onClick={addComment} className="bg-primary text-white text-[10px] font-bold py-1 px-3 rounded-md">Add Comment</button>
+                         </div>
+                      </div>
+                    )}
+
+                    {/* Show existing comments for this segment */}
+                    {comments.filter(c => c.segmentIndex === idx).map(c => (
+                       <div key={c.id} className="mt-2 ml-4 flex items-start gap-2 bg-amber-50 border-l-2 border-amber-400 p-2 rounded-r-md">
+                          <MessageSquare size={10} className="text-amber-500 mt-1"/>
+                          <span className="text-[11px] font-medium text-amber-800 italic">{c.text}</span>
+                          <button onClick={(e) => { e.stopPropagation(); setComments(cs => cs.filter(x => x.id !== c.id))}} className="ml-auto text-amber-300 hover:text-amber-600"><X size={10}/></button>
+                       </div>
+                    ))}
+                  </div>
+                ))}
              </div>
-             <p className="font-medium tracking-wide">Generate a document to start editing.</p>
-          </div>
-        )}
+           ) : (
+             <div className="flex flex-col items-center justify-center h-full text-slate-300 opacity-50 select-none">
+                <FileText size={80} className="mb-6 opacity-10" strokeWidth={1}/>
+                <p className="text-lg font-bold tracking-tight">Generate your first draft to start the review.</p>
+                <p className="text-xs uppercase font-black tracking-widest mt-2">AI-Powered Documentation Hub</p>
+             </div>
+           )}
+        </div>
       </div>
     </div>
   );

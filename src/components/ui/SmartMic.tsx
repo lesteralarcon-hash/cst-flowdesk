@@ -11,16 +11,6 @@ interface SmartMicProps {
   onToggle?: (listening: boolean) => void;
 }
 
-/**
- * SmartMic — continuous Web Speech API transcription.
- *
- * - User must click the mic button to start (no auto-start — avoids the
- *   browser blocking the permission prompt when it fires unexpectedly).
- * - Pauses automatically when the tab is hidden and resumes when the tab
- *   is focused again, so the mic does not lock other apps out.
- * - Each finalized result fires onTranscription(text) and is persisted to
- *   the DB in the background. No audio upload, no base64, no AI fallback.
- */
 export default function SmartMic({
   onTranscription,
   onInterim,
@@ -33,7 +23,6 @@ export default function SmartMic({
   const [error, setError] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
-  // True when the user wants the mic active (independent of tab visibility)
   const wantsListeningRef = useRef(false);
   const onTranscriptionRef = useRef(onTranscription);
   const onInterimRef = useRef(onInterim);
@@ -43,13 +32,9 @@ export default function SmartMic({
   useEffect(() => { onInterimRef.current = onInterim; }, [onInterim]);
   useEffect(() => { meetingIdRef.current = meetingId; }, [meetingId]);
 
-  // ── Core recognition instance factory ──────────────────────────────────────
-
   const buildRecognition = useCallback(() => {
     if (typeof window === "undefined") return null;
-    const SR =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) return null;
 
     const cleanBranding = (t: string) => t.replace(/\b(Turkey|Starkey|starkey|turkey)\b/g, "Tarkie");
@@ -69,14 +54,6 @@ export default function SmartMic({
           const text = cleanBranding(rawText);
           if (text) {
             onTranscriptionRef.current(text);
-            const mid = meetingIdRef.current;
-            if (mid) {
-              fetch(`/api/meetings/${mid}/transcribe`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text }),
-              }).catch(() => {});
-            }
           }
         } else {
           interim += cleanBranding(result[0].transcript);
@@ -88,7 +65,6 @@ export default function SmartMic({
 
     r.onend = () => {
       setInterimText("");
-      // Auto-restart as long as user still wants to listen (even if tab is hidden)
       if (wantsListeningRef.current) {
         try { r.start(); } catch { /* already started */ }
       }
@@ -99,9 +75,7 @@ export default function SmartMic({
       if (event.error === "not-allowed") {
         wantsListeningRef.current = false;
         setIsListening(false);
-        setError(
-          'Microphone blocked. In Chrome: click the 🔒 icon in the address bar → Microphone → "Allow" → refresh.'
-        );
+        setError('Mic blocked. Check permissions.');
         return;
       }
       setError(`Mic error: ${event.error}`);
@@ -110,13 +84,11 @@ export default function SmartMic({
     return r;
   }, []);
 
-  // ── Start / stop helpers ────────────────────────────────────────────────────
-
   const startListening = useCallback(() => {
-    if (recognitionRef.current) return; // already running
+    if (recognitionRef.current) return;
     const r = buildRecognition();
     if (!r) {
-      setError("Speech recognition is not supported. Please use Chrome.");
+      setError("Not supported.");
       return;
     }
     recognitionRef.current = r;
@@ -138,24 +110,8 @@ export default function SmartMic({
     onToggle?.(false);
   }, [onToggle]);
 
-  // ── Tab visibility — removed "pause on hidden" to allow background multitasking ──
-
-  // ── Cleanup on unmount ──────────────────────────────────────────────────────
-
-  useEffect(() => {
-    return () => {
-      wantsListeningRef.current = false;
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch { /* ignore */ }
-        recognitionRef.current = null;
-      }
-    };
-  }, []);
-
-  // ── Render ──────────────────────────────────────────────────────────────────
-
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 relative min-w-[20px]">
       <button
         onClick={isListening ? stopListening : startListening}
         disabled={disabled}
@@ -163,29 +119,32 @@ export default function SmartMic({
         className={`h-8 w-8 flex-shrink-0 flex items-center justify-center rounded-lg transition-all border ${
           isListening
             ? "bg-red-500 hover:bg-red-600 text-white border-red-600 shadow-sm shadow-red-200 animate-pulse"
-            : "bg-white text-text-muted hover:bg-surface-subtle border-border-default"
-        } disabled:opacity-50 disabled:cursor-not-allowed`}
+            : "bg-white text-slate-400 hover:bg-slate-50 border-slate-200"
+        } disabled:opacity-50`}
       >
         {isListening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
       </button>
 
-      <div className="flex-1 min-w-0">
-        {isListening && (
-          <div className="flex items-center gap-1.5">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-[11px] text-red-500 font-medium">Listening</span>
+      {/* Floating Listening Indicator to avoid layout shift */}
+      {isListening && (
+        <div className="absolute left-10 top-1/2 -translate-y-1/2 flex flex-col pointer-events-none whitespace-nowrap z-20">
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-red-50 border border-red-100 shadow-sm">
+             <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+             <span className="text-[10px] text-red-600 font-bold uppercase tracking-wider">Listening...</span>
           </div>
-        )}
-        {isListening && interimText && (
-          <p className="text-[11px] text-text-secondary italic truncate mt-0.5">{interimText}</p>
-        )}
-        {!isListening && !error && (
-          <p className="text-[11px] text-text-secondary">Click mic to start</p>
-        )}
-        {error && (
-          <p className="text-[11px] text-red-500 leading-tight">{error}</p>
-        )}
-      </div>
+          {interimText && (
+            <div className="mt-1 px-2 py-0.5 rounded bg-white/80 backdrop-blur-sm border border-slate-100 text-[10px] text-slate-500 italic max-w-[200px] truncate shadow-sm">
+              {interimText}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {!isListening && error && (
+        <div className="absolute left-10 top-1/2 -translate-y-1/2 text-[10px] text-red-500 font-medium whitespace-nowrap bg-white border border-red-100 px-2 py-1 rounded shadow-sm">
+          {error}
+        </div>
+      )}
     </div>
   );
 }

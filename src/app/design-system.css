@@ -136,7 +136,7 @@ a:hover {
   border-radius: 4px;
 }
 
-/* ===== LAYOUT CORE (Fixed Mode) ===== */
+/* ===== LAYOUT CORE (Safe Flexbox Sibling Mode) ===== */
 .page-shell {
   display: flex;
   height: 100vh;
@@ -150,8 +150,7 @@ a:hover {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
-  margin-left: var(--nav-width, 255px);
-  transition: margin-left 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  /* flex-sibling layout naturally handles the spacing without margin hacks */
 }
 
 .page-content-full {
@@ -209,6 +208,44 @@ a:hover {
   overflow: hidden;
   z-index: 9999; /* Ensure it is always on top */
   transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ===== INTERACTIVE BRD (Collaborative Review) ===== */
+.brd-segment {
+  position: relative;
+  transition: background-color 0.2s;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  border-radius: 4px;
+}
+
+.brd-segment:hover {
+  background-color: rgba(var(--color-primary-rgb), 0.04);
+  cursor: pointer;
+}
+
+.brd-comment-marker {
+  position: absolute;
+  left: -20px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: var(--color-primary);
+}
+
+.brd-segment:hover .brd-comment-marker {
+  opacity: 1;
+}
+
+.brd-comment-box {
+  background: white;
+  border: 1px solid var(--color-border-default);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  width: 320px;
+  z-index: 100;
 }
 
 .left-nav.collapsed {
