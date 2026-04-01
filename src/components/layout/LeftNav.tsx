@@ -41,10 +41,17 @@ export default function LeftNav() {
   const searchParams = useSearchParams();
   const { data: session, status } = useSession();
 
+  const isFocusPage = pathname?.startsWith("/architect") || pathname?.startsWith("/brd") || pathname?.startsWith("/timeline") || pathname?.startsWith("/admin");
   const isAiAppActive = aiApps.some(a => pathname?.startsWith(a.href));
   const isTasksActive = pathname?.startsWith("/tasks") ?? false;
   
   useEffect(() => setMounted(true), []);
+
+  // Auto-collapse logic for Focus Mode
+  useEffect(() => {
+    if (isFocusPage) setIsCollapsed(true);
+    else setIsCollapsed(false);
+  }, [isFocusPage]);
 
   // Load AI apps from DB once
   useEffect(() => {
@@ -52,7 +59,6 @@ export default function LeftNav() {
       .then(r => r.ok ? r.json() : [])
       .then(data => { 
         if (Array.isArray(data)) {
-          // Filter out meeting-prep and the redundant tasks link
           setAiApps(data.filter((a: any) => a.isActive && !["meeting-prep", "tasks"].includes(a.slug))); 
         }
       })
@@ -69,10 +75,10 @@ export default function LeftNav() {
   }, []);
 
 
-  // Auto-expand AI Apps group when on any AI app route
+  // Auto-expand AI Apps group when on any AI app route (unless collapsed)
   useEffect(() => {
-    if (isAiAppActive) setAiAppsOpen(true);
-  }, [isAiAppActive]);
+    if (isAiAppActive && !isCollapsed) setAiAppsOpen(true);
+  }, [isAiAppActive, isCollapsed]);
 
   // Read active project from URL after mount / navigation
   useEffect(() => {
@@ -94,29 +100,15 @@ export default function LeftNav() {
     }
   }, [isTasksActive]);
 
-  // Load hidden projects from localStorage
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem("tasks-sidebar-hidden");
-      if (stored) setHiddenProjects(new Set(JSON.parse(stored)));
-    } catch {}
-  }, []);
-
-  const toggleHide = (projectId: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const next = new Set(hiddenProjects);
-    if (next.has(projectId)) next.delete(projectId); else next.add(projectId);
-    setHiddenProjects(next);
-    try { localStorage.setItem("tasks-sidebar-hidden", JSON.stringify(Array.from(next))); } catch {}
-  };
-
   if (status === "loading") return null;
   if (!session) return null;
 
   const visibleAdminItems = (session.user as any)?.role === "admin" ? ADMIN_ITEMS : [];
-  const visibleProjects = taskProjects.filter(p => !hiddenProjects.has(p.id));
-  const hiddenProjectList = taskProjects.filter(p => hiddenProjects.has(p.id));
+  
+  // Refactored Project Sidebar logic: Only show Top 3 or Active
+  const recentProjects = taskProjects.slice(0, 3);
+  const activeProject = taskProjects.find(p => p.id === activeProjectId);
+  const showActiveSeparately = activeProject && !recentProjects.find(p => p.id === activeProject.id) && activeProjectId !== "ALL" && activeProjectId !== "DASHBOARD";
 
   const isActive = (href: string) => {
     if (!mounted) return false;
@@ -125,18 +117,42 @@ export default function LeftNav() {
     return false;
   };
 
+  // ── COLLAPSED VIEW (ICON STRIP) ──────────────────────────────────
   if (isCollapsed) {
     return (
-      <div className="left-nav collapsed">
-        <button onClick={() => setIsCollapsed(false)} className="p-3 hover:bg-surface-muted transition-colors" title="Expand navigation">
-          <ChevronRight className="w-4 h-4 text-text-muted" />
-        </button>
-      </div>
+      <nav className="left-nav collapsed group/nav" style={{ width: 72 }}>
+        <div className="flex flex-col items-center h-full py-4 gap-4">
+          <Link href="/" className="mb-2 p-1 bg-white rounded-lg shadow-sm border border-slate-100 hover:scale-110 transition-transform">
+             <div className="w-8 h-8 bg-primary rounded flex items-center justify-center">
+                <span className="text-white text-[10px] font-black">CST</span>
+             </div>
+          </Link>
+          
+          <div className="flex-1 flex flex-col items-center gap-2 w-full px-2">
+            <Link href="/" className={`p-3 rounded-xl transition-all ${isActive("/") ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-surface-muted text-text-secondary"}`} title="Explore"><Compass size={20}/></Link>
+            <Link href="/accounts" className={`p-3 rounded-xl transition-all ${isActive("/accounts") ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-surface-muted text-text-secondary"}`} title="Accounts"><Building2 size={20}/></Link>
+            <Link href="/tasks" className={`p-3 rounded-xl transition-all ${isTasksActive ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-surface-muted text-text-secondary"}`} title="Tasks"><Zap size={20}/></Link>
+            
+            <div className="h-px w-8 bg-slate-100 my-2" />
+            
+            <button onClick={() => { setIsCollapsed(false); setAiAppsOpen(true); }} className={`p-3 rounded-xl transition-all ${isAiAppActive ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-surface-muted text-text-secondary"}`} title="AI Apps"><Sparkles size={20}/></button>
+            
+            {visibleAdminItems.length > 0 && (
+              <Link href="/admin" className={`p-3 rounded-xl transition-all ${isActive("/admin") ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-surface-muted text-text-secondary"}`} title="Admin"><ShieldCheck size={20}/></Link>
+            )}
+          </div>
+
+          <button onClick={() => setIsCollapsed(false)} className="p-3 hover:bg-surface-muted text-text-muted rounded-xl transition-all" title="Expand Sidebar">
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </nav>
     );
   }
 
+  // ── EXPANDED VIEW (FULL LABELS) ───────────────────────────────────
   return (
-    <nav className="left-nav">
+    <nav className="left-nav animate-in slide-in-from-left duration-300">
       {/* Header */}
       <div className="left-nav-header">
         <Link href="/" className="left-nav-logo bg-white p-1 rounded-lg">
@@ -159,7 +175,6 @@ export default function LeftNav() {
         <Link
           href="/"
           className={`left-nav-item ${isActive("/") ? "active" : ""}`}
-          title="Explore"
         >
           <Compass className="w-3.5 h-3.5" />
           <span>Explore</span>
@@ -169,21 +184,19 @@ export default function LeftNav() {
         <Link
           href="/accounts"
           className={`left-nav-item ${isActive("/accounts") ? "active" : ""}`}
-          title="Accounts"
         >
           <Building2 className="w-3.5 h-3.5" />
-          <span>Accounts</span>
+          <span>Accounts Hub</span>
         </Link>
 
         {/* AI Apps group */}
-        <div>
+        <div className="mt-1">
           <button
             onClick={() => setAiAppsOpen(o => !o)}
             className={`left-nav-item w-full text-left ${isAiAppActive ? "active" : ""}`}
-            title="AI Apps"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span className="flex-1">AI Apps</span>
+            <span className="flex-1">AI Intelligence</span>
             <ChevronDown
               className={`w-3 h-3 text-text-muted transition-transform duration-200 ${aiAppsOpen ? "rotate-180" : ""}`}
             />
@@ -197,32 +210,32 @@ export default function LeftNav() {
                   href={item.href}
                   className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all ${
                     isActive(item.href)
-                      ? "text-primary bg-primary/5"
+                      ? "text-primary bg-primary/1"
                       : "text-text-secondary hover:bg-surface-muted"
                   }`}
                 >
-                  {ICON_MAP[item.icon ?? ""] ?? <Sparkles className="w-3.5 h-3.5" />}
-                  <span>{item.name.toLowerCase() === "brd maker" ? "BRD Maker" : item.name.replace(/\b\w/g, l => l.toUpperCase())}</span>
+                  <div className="w-4 h-4 rounded-md flex items-center justify-center bg-white border border-slate-100 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+                    {ICON_MAP[item.icon ?? ""] ?? <Sparkles className="w-2.5 h-2.5" />}
+                  </div>
+                  <span>{item.name}</span>
                 </Link>
               ))}
             </div>
           )}
         </div>
 
-        {/* Tasks (with project submenu) */}
-        <div>
+        {/* Tasks (with project switcher) */}
+        <div className="mt-1">
           <Link
             href="/tasks"
             className={`left-nav-item ${isTasksActive ? "active" : ""}`}
-            title="Tasks"
           >
             <Zap className="w-3.5 h-3.5" />
-            <span>Tasks</span>
+            <span>Tasks & Projects</span>
           </Link>
 
           {isTasksActive && (
-            <div className="ml-3 mt-0.5 mb-1 space-y-0.5 border-l border-slate-100 pl-2">
-              {/* My Dashboard */}
+            <div className="ml-3 mt-1 mb-1 space-y-0.5 border-l border-slate-100 pl-2">
               <Link
                 href="/tasks"
                 className={`flex items-center gap-2 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all ${
@@ -232,73 +245,50 @@ export default function LeftNav() {
                 <LayoutDashboard className="w-2.5 h-2.5 shrink-0" />
                 <span>My Dashboard</span>
               </Link>
-              {/* All Projects */}
-              <Link
-                href="/tasks?project=ALL"
-                className={`flex items-center gap-2 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all ${
-                  activeProjectId === "ALL" ? "text-primary bg-primary/5" : "text-text-secondary hover:bg-surface-muted"
-                }`}
-              >
-                <LayoutGrid className="w-2.5 h-2.5 shrink-0" />
-                <span>All Projects</span>
-              </Link>
+              
+              <div className="pt-2 pb-1 px-2">
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Contextual Projects</span>
+              </div>
 
-              {/* Visible projects */}
-              {visibleProjects.map(p => (
-                <div key={p.id} className="group flex items-center gap-0.5">
-                  <Link
-                    href={`/tasks?project=${p.id}`}
-                    className={`flex-1 flex items-center gap-2 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-widest truncate transition-all ${
-                      activeProjectId === p.id ? "text-primary bg-primary/5" : "text-text-secondary hover:bg-surface-muted"
-                    }`}
-                  >
-                    <FolderOpen className="w-2.5 h-2.5 shrink-0" />
-                    <span className="truncate">{p.name}</span>
-                  </Link>
-                  <button
-                    onClick={e => toggleHide(p.id, e)}
-                    title="Hide from sidebar"
-                    className="opacity-0 group-hover:opacity-100 p-0.5 text-text-secondary hover:text-amber-500 transition-all rounded"
-                  >
-                    <EyeOff className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-              ))}
-
-              {/* Hidden projects toggle */}
-              {hiddenProjectList.length > 0 && (
-                <button
-                  onClick={() => setShowHidden(!showHidden)}
-                  className="flex items-center gap-1.5 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-text-secondary opacity-50 hover:opacity-100 transition-all w-full"
+              {/* Show Active first if not in recents */}
+              {showActiveSeparately && (
+                <Link
+                  href={`/tasks?project=${activeProject.id}`}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-semibold text-primary bg-primary/5 border border-primary/10"
                 >
-                  <Archive className="w-2 h-2 shrink-0" />
-                  {showHidden ? "Hide archived" : `${hiddenProjectList.length} archived`}
-                </button>
+                  <FolderOpen className="w-3 h-3 shrink-0" />
+                  <span className="truncate">{activeProject.name}</span>
+                </Link>
               )}
 
-              {showHidden && hiddenProjectList.map(p => (
-                <div key={p.id} className="group flex items-center gap-0.5 opacity-40 hover:opacity-100 transition-all">
-                  <span className="flex-1 flex items-center gap-2 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-text-secondary truncate">
-                    <FolderOpen className="w-2.5 h-2.5 shrink-0" />
-                    <span className="truncate">{p.name}</span>
-                  </span>
-                  <button
-                    onClick={e => toggleHide(p.id, e)}
-                    title="Restore"
-                    className="opacity-0 group-hover:opacity-100 p-0.5 text-primary transition-all rounded"
-                  >
-                    <Eye className="w-2.5 h-2.5" />
-                  </button>
-                </div>
+              {/* Show Recent 3 */}
+              {recentProjects.map(p => (
+                <Link
+                  key={p.id}
+                  href={`/tasks?project=${p.id}`}
+                  className={`flex items-center gap-2 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    activeProjectId === p.id ? "text-primary bg-primary/5" : "text-text-secondary hover:bg-surface-muted"
+                  }`}
+                >
+                  <FolderOpen className="w-3 h-3 shrink-0 opacity-40" />
+                  <span className="truncate">{p.name}</span>
+                </Link>
               ))}
+
+              <Link
+                href="/tasks?project=ALL"
+                className="flex items-center gap-2 px-2 py-2 mt-1 rounded-md text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-primary hover:bg-primary/5 transition-all"
+              >
+                <LayoutGrid className="w-3 h-3" />
+                <span>Project Navigator...</span>
+              </Link>
             </div>
           )}
         </div>
 
         {/* Admin / Settings (admin only) */}
         {visibleAdminItems.length > 0 && (
-          <>
-            <div className="h-px bg-border-default my-2" />
+          <div className="mt-auto pt-2 border-t border-slate-100">
             {visibleAdminItems.map(item => (
               <Link
                 key={item.id}
@@ -306,11 +296,13 @@ export default function LeftNav() {
                 className={`left-nav-item ${isActive(item.href) ? "active" : ""}`}
                 title={item.label}
               >
-                {item.icon}
-                <span>{item.label}</span>
+                <div className="w-5 h-5 rounded-md bg-slate-50 flex items-center justify-center text-slate-500">
+                  {item.icon}
+                </div>
+                <span>Settings</span>
               </Link>
             ))}
-          </>
+          </div>
         )}
       </div>
 
@@ -321,7 +313,7 @@ export default function LeftNav() {
             <img 
               src={bottomLogo} 
               alt={appName} 
-              className="max-h-12 w-auto object-contain opacity-80 hover:opacity-100 transition-opacity" 
+              className="max-h-12 w-auto object-contain opacity-80" 
             />
           </div>
         ) : (

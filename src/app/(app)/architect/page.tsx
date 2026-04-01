@@ -269,7 +269,7 @@ function ArchitectContent() {
       {/* Main Canvas Area */}
       <div className="flex-1 w-2/3 bg-surface-subtle relative overflow-hidden flex flex-col">
         {isMermaid && chart && (
-          <div className="absolute top-4 right-4 z-50 flex items-center gap-1 bg-surface-default border border-border-default shadow-sm rounded-lg p-1">
+          <div className="absolute top-4 right-4 z-[40] flex items-center gap-1 bg-surface-default border border-border-default shadow-sm rounded-lg p-1">
              <button onClick={handleMermaidExport} className="p-1.5 hover:bg-surface-muted rounded-md text-text-secondary border-r border-border-default pr-2 mr-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider"><Download className="h-3.5 w-3.5"/> Export</button>
              <button onClick={() => handleMermaidZoom('out')} className="p-1.5 hover:bg-surface-muted rounded-md text-text-secondary"><ZoomOut className="h-4 w-4"/></button>
              <button onClick={() => handleMermaidZoom('reset')} className="p-1.5 hover:bg-surface-muted rounded-md text-text-secondary"><Maximize className="h-4 w-4"/></button>

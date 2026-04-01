@@ -52,7 +52,7 @@ export default function UserButton() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-10 w-64 bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-100 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute right-0 top-10 w-64 bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-100 z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
           {/* User info */}
           <div className="px-4 py-4 border-b border-slate-100">
             <div className="flex items-center gap-3">
