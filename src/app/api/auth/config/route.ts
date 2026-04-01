@@ -54,6 +54,7 @@ export async function GET() {
     const repairs = [
       { table: "User", column: "status", type: "TEXT DEFAULT 'approved'" },
       { table: "User", column: "isSuperAdmin", type: "INTEGER DEFAULT 0" },
+      { table: "User", column: "supervisorId", type: "TEXT" },
       { table: "App", column: "provider", type: "TEXT" },
       { table: "App", column: "isActive", type: "INTEGER DEFAULT 1" },
       { table: "Project", column: "externalContact", type: "TEXT" },
