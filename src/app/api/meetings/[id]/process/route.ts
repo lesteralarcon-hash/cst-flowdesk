@@ -80,10 +80,6 @@ The format should be:
 - Ask clarification questions if things got non-sense like perhaps a misheard terminology or unknown terminology.
 `;
 
-    const momInstructions = (momSkill?.content || "") + "\n" + baseMomInstructions;
-
-    // AI Prompts
-    const minutesPrompt = `${momInstructions}\n\n${fullContentForAI}\n\nReturn ONLY a valid JSON object:\n{\n  "title": "Professional Meeting Title",\n  "date": "Meeting Date and Duration",\n  "attendees": ["List of all present individuals"],\n  "keyTakeaways": ["Explicit strategic decisions or realizations"],\n  "actionItems": [{"task": "detailed task", "owner": "assigned person or empty string"}],\n  "clarificationsRequired": ["Ambiguous or misheard points requiring followup"]\n}`;
 
     // Fetch BRD Skill (Loaded from Admin)
     const brdSkillRows = await db.select().from(skillsTable).where(and(eq(skillsTable.category, 'brd'), eq(skillsTable.isActive, true))).orderBy(desc(skillsTable.updatedAt)).limit(1);
