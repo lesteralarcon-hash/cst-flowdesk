@@ -36,10 +36,23 @@ export default function LeftNav() {
       .then(r => r.ok ? r.json() : [])
       .then(data => {
         if (Array.isArray(data)) {
-          setAiApps(data.filter((a: any) => a.isActive && !["meeting-prep", "tasks"].includes(a.slug)));
+          const apps = data.filter((a: any) => a.isActive && !["meeting-prep", "tasks"].includes(a.slug));
+          setAiApps(apps);
+          
+          // AUTO-EXPAND: If current path is an AI App, open the menu immediately
+          if (pathname && apps.some((a: any) => pathname.startsWith(a.href))) {
+            setAiAppsOpen(true);
+          }
         }
       });
   }, []);
+
+  // Sync open state with navigation
+  useEffect(() => {
+    if (pathname && aiApps.some(a => pathname.startsWith(a.href))) {
+      setAiAppsOpen(true);
+    }
+  }, [pathname, aiApps]);
 
   if (!session) return null;
 
@@ -92,14 +105,22 @@ export default function LeftNav() {
                 <Sparkles size={14} /> <span className="flex-1 text-left">AI Intelligence</span>
                 <ChevronDown size={12} className={`transition-transform duration-200 ${aiAppsOpen ? "rotate-180" : ""}`} />
               </button>
-              {aiAppsOpen && (
+              {aiAppsOpen && !isCollapsed && (
                 <div className="ml-4 mt-0.5 space-y-0.5 border-l border-slate-100 pl-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                  {aiApps.map(app => (
-                    <Link key={app.id} href={app.href} className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${isActive(app.href) ? "text-primary bg-primary/5" : "text-slate-500 hover:bg-slate-50"}`}>
-                      {ICON_MAP[app.icon ?? ""] || <Sparkles size={12} />}
-                      <span>{app.name}</span>
-                    </Link>
-                  ))}
+                  {aiApps.map(app => {
+                    const active = isActive(app.href);
+                    return (
+                      <Link 
+                        key={app.id} 
+                        href={app.href} 
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all duration-200 ${active ? "text-primary bg-primary/10 font-bold" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}
+                      >
+                        <div className={`w-1.5 h-1.5 rounded-full transition-all ${active ? "bg-primary scale-100" : "bg-transparent scale-0"}`} />
+                        {ICON_MAP[app.icon ?? ""] || <Sparkles size={12} />}
+                        <span>{app.name}</span>
+                      </Link>
+                    );
+                  })}
                 </div>
               )}
             </div>
