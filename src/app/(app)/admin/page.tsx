@@ -1725,7 +1725,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                                     value={editingUser.supervisorId || ''}
                                     onChange={e => setEditingUser((eu: any) => ({ ...eu, supervisorId: e.target.value || null }))}>
                                     <option value="">— No Supervisor (Root) —</option>
-                                    {userList.filter(u_item => u_item.id !== editingUser.id).map(u_item => (
+                                    {userList.filter(u_item => u_item.id !== editingUser.id && u_item.status === 'active').map(u_item => (
                                       <option key={u_item.id} value={u_item.id}>{u_item.name || u_item.email}</option>
                                     ))}
                                   </select>
@@ -1929,7 +1929,23 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
                   <div className="max-w-4xl mx-auto py-8">
                     {(() => {
                       const buildTree = (supervisorId: string | null = null, level = 0): React.ReactNode[] => {
-                        const subordinates = userList.filter(u => (u.supervisorId || null) === supervisorId);
+                        // Effective filtering: Only show active users in the actual chart nodes
+                        // However, we must allow subordinates of blocked users to "skip up" to the next active ancestor
+                        const activeUsers = userList.filter(u => u.status === 'active');
+                        
+                        // Helper to find the effective supervisor for a user (skipping blocked ones)
+                        const getEffectiveSupervisorId = (u: any): string | null => {
+                          let currentId = u.supervisorId || null;
+                          while (currentId) {
+                            const supervisor = userList.find(s => s.id === currentId);
+                            if (!supervisor) return null;
+                            if (supervisor.status === 'active') return currentId;
+                            currentId = supervisor.supervisorId || null;
+                          }
+                          return null;
+                        };
+
+                        const subordinates = activeUsers.filter(u => getEffectiveSupervisorId(u) === supervisorId);
                         
                         return subordinates.map(user => (
                           <div key={user.id} className="relative">

@@ -116,9 +116,6 @@ export default function LeftNav() {
                 <Link href="/admin" className={`left-nav-item ${isActive("/admin") ? "active" : ""}`}>
                   <LayoutDashboard size={14} /> <span>Admin Console</span>
                 </Link>
-                <Link href="/admin?tab=org-chart" className={`left-nav-item ${pathname === "/admin" && isActive("/admin") && searchParams?.get("tab") === "org-chart" ? "active" : ""}`}>
-                   <Network size={14} /> <span>Org Chart</span>
-                </Link>
               </div>
             )}
           </>
@@ -138,7 +135,6 @@ export default function LeftNav() {
             {session?.user?.role === "admin" && (
               <div className="mt-4 pt-4 border-t border-slate-50 flex flex-col items-center gap-2">
                 <Link href="/admin" className={`p-2.5 rounded-xl transition-all ${isActive("/admin") ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`} title="Admin Console"><LayoutDashboard size={20}/></Link>
-                <Link href="/admin?tab=org-chart" className={`p-2.5 rounded-xl transition-all ${pathname === "/admin" && searchParams?.get("tab") === "org-chart" ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`} title="Org Chart"><Network size={20}/></Link>
               </div>
             )}
           </div>
