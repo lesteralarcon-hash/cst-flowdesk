@@ -60,24 +60,15 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
         {!isCollapsed ? (
           <>
             <ForceLink href="/" className="flex items-center gap-2 overflow-hidden">
-              {logoUrl ? (
-                <img src={logoUrl} alt={brandName} className="h-6 w-auto object-contain shrink-0" />
-              ) : (
-                <div className="w-5 h-5 bg-primary rounded flex items-center justify-center text-[8px] font-black text-white shrink-0 shadow-sm">CST</div>
-              )}
-              <span className="text-[12px] font-bold text-slate-800 uppercase tracking-tighter whitespace-nowrap truncate">{brandName}</span>
+              <span className="text-[12px] font-black text-slate-900 uppercase tracking-tighter whitespace-nowrap truncate">{brandName}</span>
             </ForceLink>
             <button onClick={() => setIsCollapsed(true)} className="p-1 hover:bg-slate-50 rounded text-slate-400">
               <ChevronLeft size={14} />
             </button>
           </>
         ) : (
-          <button className="mx-auto block" onClick={() => setIsCollapsed(false)}>
-            {logoUrl ? (
-              <img src={logoUrl} alt={brandName} className="w-7 h-7 object-contain" />
-            ) : (
-              <div className="w-7 h-7 bg-primary rounded flex items-center justify-center text-[11px] font-black text-white shadow-sm">CST</div>
-            )}
+          <button className="mx-auto block p-1 text-slate-400 hover:text-primary" onClick={() => setIsCollapsed(false)}>
+            <ChevronRight size={18} />
           </button>
         )}
       </div>
@@ -149,10 +140,19 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
         )}
       </div>
 
-      <div className="p-2 border-t mt-auto">
-        <button onClick={() => setIsCollapsed(!isCollapsed)} className="w-full flex items-center justify-center p-2 text-slate-400 hover:text-primary hover:bg-slate-50 rounded-lg transition-colors">
-          {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-        </button>
+      {/* Bottom Branding (Logo) */}
+      <div className="p-3 border-t mt-auto flex items-center justify-center">
+        {logoUrl ? (
+          <img 
+            src={logoUrl} 
+            alt={brandName} 
+            className={`object-contain transition-all duration-300 ${isCollapsed ? "h-6" : "h-7"}`} 
+          />
+        ) : (
+          <div className={`bg-primary rounded flex items-center justify-center font-black text-white shadow-sm transition-all duration-300 ${isCollapsed ? "w-6 h-6 text-[8px]" : "w-8 h-8 text-[10px]"}`}>
+            {brandName.substring(0, 2).toUpperCase()}
+          </div>
+        )}
       </div>
     </aside>
   );

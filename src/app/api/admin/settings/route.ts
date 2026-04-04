@@ -15,13 +15,13 @@ export async function GET() {
     // Provide generic fallbacks only if DB is empty
     return NextResponse.json({
       ...config,
-      app_name: config.app_name || "FlowDesk",
+      app_name: config.app_name || "CST OS",
       app_logo: config.bottom_logo_url || config.company_logo || "",
     });
   } catch (error: any) {
     console.error("GET /api/admin/settings error:", error);
     return NextResponse.json({
-      app_name: "FlowDesk",
+      app_name: "CST OS",
       app_logo: ""
     });
   }

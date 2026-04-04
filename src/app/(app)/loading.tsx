@@ -14,7 +14,7 @@ export default function Loading() {
   }, []);
 
   const logoUrl = settings?.app_logo || settings?.bottom_logo_url;
-  const brandName = settings?.app_name || "FlowDesk";
+  const brandName = settings?.app_name || "CST OS";
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center min-h-screen bg-white">

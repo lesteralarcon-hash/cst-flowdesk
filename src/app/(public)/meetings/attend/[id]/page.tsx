@@ -515,13 +515,13 @@ function Shell({ children, settings = {} }: { children: React.ReactNode; setting
   return (
     <div className="min-h-screen bg-white flex flex-col antialiased">
       {/* Header */}
-      <div className="flex flex-col items-center pt-8 pb-5">
+      <div className="flex flex-col items-center pt-10 pb-6">
         {logoUrl ? (
-          <img src={logoUrl} alt={brandName} className="h-10 w-auto object-contain" />
+          <img src={logoUrl} alt="Logo" className="h-12 w-auto object-contain" />
         ) : (
-          <div className="text-xl font-black text-primary tracking-tighter uppercase">{brandName}</div>
+          <div className="text-2xl font-black text-primary tracking-tighter uppercase">{brandName}</div>
         )}
-        <p className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-widest opacity-60">Meeting Attendance</p>
+        {!logoUrl && <p className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-widest opacity-60">Meeting Attendance</p>}
       </div>
       {children}
     </div>
