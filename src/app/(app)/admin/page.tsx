@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Key, LayoutTemplate, Users, Calendar, Plus, Trash2, GripVertical, Save, Loader2, ChevronDown, ChevronRight, BookOpen, Pencil, X, RefreshCw, ToggleLeft, ToggleRight, Shield, Sparkles, ExternalLink, Tag, Download, Upload, Building2, AlertCircle, CheckCircle2, Network } from "lucide-react";
 import * as XLSX from "xlsx";
+import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 
 interface TemplateTask {
   id?: string;
@@ -38,6 +39,14 @@ interface Skill {
 
 export default function AdminSettings() {
   const [activeTab, setActiveTab] = useState<"company" | "auth" | "apps" | "templates" | "users" | "skills" | "roles" | "org-chart">("company");
+  const { setBreadcrumbs } = useBreadcrumbs();
+
+  useEffect(() => {
+    setBreadcrumbs([
+      { label: "Settings", href: "/admin" },
+      { label: "Console" }
+    ]);
+  }, [setBreadcrumbs]);
 
   // App Builder state
   const [appList, setAppList] = useState<any[]>([]);
@@ -781,16 +790,7 @@ Keep it concise, strictly professional, and exceptionally formatted.`;
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-white">
-
-      {/* ── Global Bar ──────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 flex-shrink-0"
-        style={{ height: 40, borderBottom: '1px solid #E9EAEB', background: '#fff' }}>
-        <div className="flex items-center gap-2">
-          <Shield size={12} style={{ color: '#2162F9' }} />
-          <span style={{ fontSize: 12, fontWeight: 500, color: '#252B37' }}>System Administration</span>
-        </div>
-      </div>
+    <div className="flex flex-col h-full bg-white">
 
       {/* ── Tabs Bar ────────────────────────────────────────────── */}
       <div className="flex items-end px-4 flex-shrink-0"

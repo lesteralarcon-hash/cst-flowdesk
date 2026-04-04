@@ -38,22 +38,10 @@ function TasksContent() {
   }, [projectId]);
 
   if (showPersonalDashboard) {
-    return (
-      <div className="flex flex-col h-screen overflow-hidden bg-white">
-        <div className="flex-1 overflow-hidden flex flex-col">
-          <PersonalDashboard />
-        </div>
-      </div>
-    );
+    return <PersonalDashboard />;
   }
 
-  return (
-    <div className="flex flex-col h-screen overflow-hidden bg-white">
-      <div className="flex-1 overflow-hidden">
-        <TaskDashboard projectId={projectId} />
-      </div>
-    </div>
-  );
+  return <TaskDashboard projectId={projectId} />;
 }
 
 export default function TasksPage() {
