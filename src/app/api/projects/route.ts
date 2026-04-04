@@ -86,13 +86,18 @@ export async function GET(req: Request) {
   try {
     const session = await auth();
     const userId = session?.user?.id;
+    const userRole = session?.user?.role;
+    
     if (!userId) {
+      console.warn("[api/projects] Unauthorized access attempt.");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const userRole = session?.user?.role;
     const { searchParams } = new URL(req.url);
     const filter = searchParams.get('filter');
+    const isAdmin = (userRole?.toLowerCase() === "admin");
+
+    console.log(`[api/projects] Fetching... UserID: ${userId} | Role: ${userRole} | IsAdmin: ${isAdmin} | Filter: ${filter}`);
 
     // Visibility Logic
     // Admins see all. Owners see their own. Assigned users see assigned.
@@ -100,15 +105,15 @@ export async function GET(req: Request) {
     
     if (filter === 'mine') {
        whereClause = eq(projectsTable.userId, userId);
-    } else if (userRole !== "admin") {
+    } else if (!isAdmin) {
        whereClause = or(
          eq(projectsTable.userId, userId),
          like(projectsTable.assignedIds, `%${userId}%`)
        );
     }
 
-    // Drizzle select with left join
-    const projects = await db.select({
+    // Drizzle select with left join for template info
+    const data = await db.select({
       id: projectsTable.id,
       name: projectsTable.name,
       companyName: projectsTable.companyName,
@@ -123,13 +128,19 @@ export async function GET(req: Request) {
       templateName: timelineTemplatesTable.name
     })
     .from(projectsTable)
-    .leftJoin(timelineTemplatesTable, eq(projectsTable.templateId, timelineTemplatesTable.id))
+    .leftJoin(
+        timelineTemplatesTable, 
+        eq(projectsTable.templateId, timelineTemplatesTable.id)
+    )
     .where(whereClause)
     .orderBy(desc(projectsTable.updatedAt));
 
-    return NextResponse.json(projects);
+    return NextResponse.json(data);
   } catch (error: any) {
-    console.error("Fetch Projects Error:", error);
-    return NextResponse.json({ error: "Failed to fetch projects" }, { status: 500 });
+    console.error("[api/projects] CRITICAL ERROR:", error);
+    return NextResponse.json({ 
+        error: "Failed to fetch projects",
+        detail: error.message || "Internal Database Error" 
+    }, { status: 500 });
   }
 }
