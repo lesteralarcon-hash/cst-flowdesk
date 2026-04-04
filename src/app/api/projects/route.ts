@@ -83,8 +83,9 @@ export async function POST(req: Request) {
  * MIGRATED TO DRIZZLE
  */
 export async function GET(req: Request) {
+  let session: any = null;
   try {
-    const session = await auth();
+    session = await auth();
     const userId = session?.user?.id;
     const userRole = session?.user?.role;
     
@@ -99,21 +100,8 @@ export async function GET(req: Request) {
 
     console.log(`[api/projects] Fetching... UserID: ${userId} | Role: ${userRole} | IsAdmin: ${isAdmin} | Filter: ${filter}`);
 
-    // Visibility Logic
-    // Admins see all. Owners see their own. Assigned users see assigned.
-    let whereClause: any = undefined;
-    
-    if (filter === 'mine') {
-       whereClause = eq(projectsTable.userId, userId);
-    } else if (!isAdmin) {
-       whereClause = or(
-         eq(projectsTable.userId, userId),
-         like(projectsTable.assignedIds, `%${userId}%`)
-       );
-    }
-
-    // Drizzle select with left join for template info
-    const data = await db.select({
+    // EXPLICIT LOGIC: Admins see all. Owners see their own. Assigned users see assigned.
+    let baseQuery = db.select({
       id: projectsTable.id,
       name: projectsTable.name,
       companyName: projectsTable.companyName,
@@ -131,16 +119,37 @@ export async function GET(req: Request) {
     .leftJoin(
         timelineTemplatesTable, 
         eq(projectsTable.templateId, timelineTemplatesTable.id)
-    )
-    .where(whereClause)
-    .orderBy(desc(projectsTable.updatedAt));
+    );
+
+    let data: any[];
+    
+    // BUILD THE FILTERED QUERY
+    if (filter === 'mine') {
+       data = await baseQuery
+         .where(eq(projectsTable.userId, userId))
+         .orderBy(desc(projectsTable.updatedAt));
+    } else if (isAdmin) {
+       // ADMINS: Bypass WHERE entirely
+       data = await baseQuery
+         .orderBy(desc(projectsTable.updatedAt));
+    } else {
+       // STANDARD USERS: Shared/Assigned Visibility
+       data = await baseQuery
+         .where(or(
+           eq(projectsTable.userId, userId),
+           like(projectsTable.assignedIds, `%${userId}%`)
+         ))
+         .orderBy(desc(projectsTable.updatedAt));
+    }
 
     return NextResponse.json(data);
   } catch (error: any) {
     console.error("[api/projects] CRITICAL ERROR:", error);
+    // Explicitly return the error message in the detail field so the user can see it in their network tab
     return NextResponse.json({ 
         error: "Failed to fetch projects",
-        detail: error.message || "Internal Database Error" 
+        detail: error.message || "Internal Database Error",
+        userRole: session?.user?.role || "unknown"
     }, { status: 500 });
   }
 }
