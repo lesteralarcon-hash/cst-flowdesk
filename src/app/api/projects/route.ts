@@ -71,8 +71,8 @@ export async function POST(req: Request) {
             id: `ti_${projectId}_${index}_${Math.random().toString(36).substring(7)}`,
             projectId: projectId,
             clientProfileId: clientProfileId || null,
-            taskCode: event.taskCode,
-            subject: event.subject,
+            taskCode: event.taskCode || `T-${String(index + 1).padStart(2, '0')}`,
+            subject: event.subject || "Untitled Task",
             plannedStart: safeIsoDate(event.startDate, sanitizedStartDate),
             plannedEnd: safeIsoDate(event.endDate, sanitizedStartDate),
             externalPlannedEnd: calculateClientEndDate(event.endDate, 3), // Initial default padding
@@ -94,8 +94,19 @@ export async function POST(req: Request) {
 
     return NextResponse.json(project);
   } catch (error: any) {
-    console.error("Save Project Error:", error);
-    return NextResponse.json({ error: error.message || "Failed to save project" }, { status: 500 });
+    console.error("[api/projects] CRITICAL SAVE ERROR:", error);
+    
+    // UNMASK: Tell the user exactly what rule they are breaking
+    const diagnostic = {
+        error: "Atomic Save Failed",
+        message: error.message || "Unknown Failure",
+        code: error.code || "N/A",
+        hint: (error.message || "").includes("FOREIGN KEY") ? "User account synchronization issue." : 
+              (error.message || "").includes("NOT NULL") ? "A mandatory field (Subject/Code) was empty." :
+              "General Database Constraint."
+    };
+    
+    return NextResponse.json(diagnostic, { status: 500 });
   }
 }
 
