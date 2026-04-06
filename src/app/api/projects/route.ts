@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { projects as projectsTable, timelineItems as timelineItemsTable, timelineTemplates as timelineTemplatesTable } from "@/db/schema";
+import { users as usersTable, projects as projectsTable, timelineItems as timelineItemsTable, timelineTemplates as timelineTemplatesTable } from "@/db/schema";
 import { auth } from "@/auth";
-import { eq, desc, or, like } from "drizzle-orm";
+import { eq, desc, or, like, inArray } from "drizzle-orm";
 import { calculateClientEndDate } from "@/lib/utils/business-days";
 import { ensureUserInDb } from "@/lib/utils/auth-sync";
 import crypto from "crypto";
@@ -57,6 +57,8 @@ export async function POST(req: Request) {
         startDate: sanitizedStartDate,
         templateId: templateId || null,
         assignedIds: assignedIds ? (Array.isArray(assignedIds) ? assignedIds.join(",") : assignedIds) : null,
+        internalInCharge: userId,
+        createdBy: userId,
         defaultPaddingDays: 3, 
         shareToken: crypto.randomUUID(),
         status: "active",
@@ -134,12 +136,31 @@ export async function GET(req: Request) {
 
     console.log(`[api/projects] Fetching (Version: ${version}). UserID: ${userId} | Role: ${userRole} | IsAdmin: ${isAdmin}`);
 
+    /**
+     * ORG CHART LOGIC (SUPERVISOR OVERSIGHT)
+     */
+    let subordinateIds: string[] = [];
+    if (!isAdmin) {
+        try {
+            const subordinates = await db.select({ id: usersTable.id })
+                .from(usersTable)
+                .where(eq(usersTable.supervisorId, userId));
+            subordinateIds = subordinates.map(s => s.id);
+            if (subordinateIds.length > 0) {
+                console.log(`[api/projects] Supervisor detected. Monitoring subordinates: ${subordinateIds.length}`);
+            }
+        } catch (orgErr) {
+            console.error("[api/projects] Org chart fetch failed:", orgErr);
+        }
+    }
+
     let data: any[] = [];
     
     try {
         // 1. PRIMARY ATTEMPT: Rich data with Template Joins
         let baseQuery = db.select({
             id: projectsTable.id,
+            userId: projectsTable.userId,
             name: projectsTable.name,
             companyName: projectsTable.companyName,
             clientProfileId: projectsTable.clientProfileId,
@@ -147,6 +168,8 @@ export async function GET(req: Request) {
             status: projectsTable.status,
             templateId: projectsTable.templateId,
             assignedIds: projectsTable.assignedIds,
+            internalInCharge: projectsTable.internalInCharge,
+            createdBy: projectsTable.createdBy,
             createdAt: projectsTable.createdAt,
             updatedAt: projectsTable.updatedAt,
             templateType: timelineTemplatesTable.type,
@@ -158,12 +181,23 @@ export async function GET(req: Request) {
             eq(projectsTable.templateId, timelineTemplatesTable.id)
         );
 
-        if (filter === 'mine') {
-            data = await baseQuery.where(eq(projectsTable.userId, userId)).orderBy(desc(projectsTable.updatedAt));
-        } else if (isAdmin) {
-            data = await baseQuery.orderBy(desc(projectsTable.updatedAt));
+        if (isAdmin) {
+             // Admin Bypass: See all
+             data = await baseQuery.orderBy(desc(projectsTable.updatedAt));
+        } else if (filter === 'mine') {
+             data = await baseQuery.where(eq(projectsTable.userId, userId)).orderBy(desc(projectsTable.updatedAt));
         } else {
-            data = await baseQuery.where(or(eq(projectsTable.userId, userId), like(projectsTable.assignedIds, `%${userId}%`))).orderBy(desc(projectsTable.updatedAt));
+             // COLLABORATIVE FILTER: Owner OR Assigned OR Subordinate
+             const filters = [
+                eq(projectsTable.userId, userId),
+                like(projectsTable.assignedIds, `%${userId}%`)
+             ];
+             
+             if (subordinateIds.length > 0) {
+                filters.push(inArray(projectsTable.userId, subordinateIds));
+             }
+
+             data = await baseQuery.where(or(...filters)).orderBy(desc(projectsTable.updatedAt));
         }
     } catch (dbError: any) {
         console.warn("[api/projects] JOIN ERROR - Falling back to simple query:", dbError.message);

@@ -112,12 +112,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           const dbUser = results[0];
           if (dbUser) {
             token.id = dbUser.id;
-            token.role = dbUser.role;
-            if (isAdmin && dbUser.role !== "admin") {
-              token.role = "admin";
-            }
-          } else if (isAdmin) {
-             token.role = "admin";
+            token.role = dbUser.role || (isAdmin ? "admin" : "user");
+          }
+          
+          // MASTER OVERRIDE: Whitelist always wins
+          if (isAdmin) {
+            token.role = "admin";
           }
         } catch {
           token.role = isAdmin ? "admin" : "user";
