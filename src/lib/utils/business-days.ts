@@ -11,8 +11,9 @@
  */
 export function addBusinessDays(date: Date | string, days: number): Date {
   const result = new Date(date);
-  let daysAdded = 0;
+  if (isNaN(result.getTime())) return new Date(); // Safety fallback to 'now'
   
+  let daysAdded = 0;
   while (daysAdded < days) {
     result.setDate(result.getDate() + 1);
     // 0 = Sunday, 6 = Saturday
@@ -35,8 +36,11 @@ export function formatToISODate(date: Date): string {
 /**
  * Calculates the 'Client Padded' end date based on internal end date and padding.
  */
-export function calculateClientEndDate(internalEnd: string, padding: number): string {
-  if (!internalEnd) return "";
-  const paddedDate = addBusinessDays(new Date(internalEnd), padding);
+export function calculateClientEndDate(internalEnd: string, padding: number): string | null {
+  if (!internalEnd) return null;
+  const d = new Date(internalEnd);
+  if (isNaN(d.getTime())) return null; // Prevent .toISOString() crash
+
+  const paddedDate = addBusinessDays(d, padding);
   return formatToISODate(paddedDate);
 }

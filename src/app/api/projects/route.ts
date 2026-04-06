@@ -33,6 +33,18 @@ export async function POST(req: Request) {
     const projectId = `proj_${Date.now()}`;
     const nowStr = new Date().toISOString();
 
+    /**
+     * SAFE DATE HELPER: 
+     * Prevents .toISOString() crashes on invalid AI dates.
+     */
+    const safeIsoDate = (dStr: any, fallback: string = nowStr) => {
+        if (!dStr) return fallback;
+        const d = new Date(dStr);
+        return isNaN(d.getTime()) ? fallback : d.toISOString();
+    };
+
+    const sanitizedStartDate = safeIsoDate(startDate);
+
     // Drizzle Transaction to ensure both project and its items are created
     const project = await db.transaction(async (tx) => {
       // 1. Create the project
@@ -42,7 +54,7 @@ export async function POST(req: Request) {
         name: name,
         companyName: name,
         clientProfileId: clientProfileId || null,
-        startDate: new Date(startDate).toISOString(),
+        startDate: sanitizedStartDate,
         templateId: templateId || null,
         assignedIds: assignedIds ? (Array.isArray(assignedIds) ? assignedIds.join(",") : assignedIds) : null,
         defaultPaddingDays: 3, 
@@ -61,8 +73,8 @@ export async function POST(req: Request) {
             clientProfileId: clientProfileId || null,
             taskCode: event.taskCode,
             subject: event.subject,
-            plannedStart: new Date(event.startDate).toISOString(),
-            plannedEnd: new Date(event.endDate).toISOString(),
+            plannedStart: safeIsoDate(event.startDate, sanitizedStartDate),
+            plannedEnd: safeIsoDate(event.endDate, sanitizedStartDate),
             externalPlannedEnd: calculateClientEndDate(event.endDate, 3), // Initial default padding
             durationHours: event.durationHours || 8,
             owner: event.owner || null,
