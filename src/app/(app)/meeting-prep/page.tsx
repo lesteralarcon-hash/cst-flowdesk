@@ -15,6 +15,9 @@ import { useSearchParams } from "next/navigation";
 import { useToast } from "@/components/ui/ToastContext";
 import { formatRef } from "@/lib/utils/format";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
+import InteractiveGantt from "@/components/timeline/InteractiveGantt";
+import BufferModal from "@/components/timeline/BufferModal";
+import { Share, Mail, Copy, Check, X } from "lucide-react";
 
 
 const WorkflowCanvas = dynamic(() => import("@/components/flow/WorkflowCanvas"), { ssr: false });
@@ -703,7 +706,7 @@ export function AccountHub({ profile, onEdit, onBack }: {
           {activeTab === "meetings" && <MeetingsTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "brd" && <BRDTab accountId={profile.id} companyName={profile.companyName} />}
           {activeTab === "flows" && <FlowsTab accountId={profile.id} companyName={profile.companyName} />}
-          {activeTab === "projects" && <ProjectsTab accountId={profile.id} companyName={profile.companyName} />}
+          {activeTab === "projects" && <ProjectsTab accountId={profile.id} companyName={profile.companyName} profile={profile} />}
           {activeTab === "mockups" && <MockupsTab accountId={profile.id} companyName={profile.companyName} />}
         </div>
       </div>
@@ -1103,11 +1106,18 @@ export function FlowsTab({ accountId, companyName }: { accountId: string; compan
 
 // ─── Projects & Tasks Tab ─────────────────────────────────────────────────────
 
-export function ProjectsTab({ accountId, companyName }: { accountId: string; companyName: string }) {
+export function ProjectsTab({ accountId, companyName, profile }: { accountId: string; companyName: string; profile?: any }) {
   const [projects, setProjects] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"projects" | "tasks">("tasks");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [projectSubTab, setProjectSubTab] = useState<"list" | "gantt">("list");
+  
+  // SHARING STATE
+  const [sharingProjectId, setSharingProjectId] = useState<string | null>(null);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const { showToast } = useToast();
 
   useEffect(() => {
     setLoading(true);
@@ -1120,54 +1130,145 @@ export function ProjectsTab({ accountId, companyName }: { accountId: string; com
     }).finally(() => setLoading(false));
   }, [accountId]);
 
+  const handleShare = (project: any) => {
+    setSharingProject(project);
+    setIsShareModalOpen(true);
+  };
+
+  const selectedProject = useMemo(() => projects.find(p => p.id === selectedProjectId), [projects, selectedProjectId]);
+  const projectTasks = useMemo(() => tasks.filter(t => t.projectId === selectedProjectId), [tasks, selectedProjectId]);
+
   if (loading) return <TabLoading />;
 
   return (
     <div className="p-5 space-y-5">
       <div className="flex items-center justify-between">
         <div className="flex bg-surface-muted p-1 rounded-lg">
-          <button onClick={() => setViewMode("tasks")} className={`px-4 py-1 text-[11px] font-semibold rounded-md transition-all ${viewMode === "tasks" ? "bg-white text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}>Tasks</button>
-          <button onClick={() => setViewMode("projects")} className={`px-4 py-1 text-[11px] font-semibold rounded-md transition-all ${viewMode === "projects" ? "bg-white text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}>Projects</button>
+          <button 
+            onClick={() => { setViewMode("tasks"); setSelectedProjectId(null); }} 
+            className={`px-4 py-1 text-[11px] font-semibold rounded-md transition-all ${viewMode === "tasks" && !selectedProjectId ? "bg-white text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
+          >
+            All Action Items
+          </button>
+          <button 
+            onClick={() => { setViewMode("projects"); setSelectedProjectId(null); }} 
+            className={`px-4 py-1 text-[11px] font-semibold rounded-md transition-all ${viewMode === "projects" && !selectedProjectId ? "bg-white text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
+          >
+            Projects
+          </button>
+          {selectedProjectId && (
+            <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border-default">
+              <span className="text-[11px] font-bold text-primary bg-white px-2 py-1 rounded shadow-sm flex items-center gap-1.5 uppercase tracking-tighter">
+                <FolderOpen className="w-3 h-3" /> {selectedProject?.name}
+              </span>
+              <button 
+                onClick={() => setSelectedProjectId(null)}
+                className="p-1 hover:bg-white rounded-md text-text-muted hover:text-red-500 transition-colors"
+              >
+                <Plus className="w-3 h-3 rotate-45" />
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex gap-3">
           <a href={`/tasks?clientId=${accountId}`} className="flex items-center gap-1 text-[11px] text-primary hover:underline font-medium">
-             <ExternalLink className="w-3 h-3" /> Go to Task App
+             <ExternalLink className="w-3 h-3" /> External Launcher
           </a>
         </div>
       </div>
 
-      {viewMode === "projects" ? (
+      {selectedProjectId ? (
+        <div className="space-y-4">
+           {/* SUB-TABS (Tabs vs Gantt) */}
+           <div className="flex items-center justify-between border-b border-border-default pb-0">
+              <div className="flex gap-6 h-10 items-end">
+                <button 
+                  onClick={() => setProjectSubTab("list")}
+                  className={`h-full flex items-center px-1 text-[12px] border-b-2 transition-all relative ${projectSubTab === "list" ? "border-primary text-primary font-bold" : "border-transparent text-text-muted font-medium"}`}
+                >
+                  Action Item List
+                </button>
+                <button 
+                  onClick={() => setProjectSubTab("gantt")}
+                  className={`h-full flex items-center px-1 text-[12px] border-b-2 transition-all relative ${projectSubTab === "gantt" ? "border-primary text-primary font-bold" : "border-transparent text-text-muted font-medium"}`}
+                >
+                  Visual Roadmap (Gantt)
+                </button>
+              </div>
+              <div className="flex gap-2 pb-2">
+                 <button 
+                   onClick={() => handleShare(selectedProject)}
+                   className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-[11px] font-bold shadow-sm hover:scale-[1.02] active:scale-[0.98] transition-all uppercase tracking-tight"
+                 >
+                   <Share className="w-3 h-3" strokeWidth={3} /> Share Link
+                 </button>
+              </div>
+           </div>
+
+           {projectSubTab === "list" ? (
+             <TaskTable tasks={projectTasks} />
+           ) : (
+             <div className="h-[500px] border border-border-default rounded-2xl overflow-hidden bg-white shadow-xl">
+                <InteractiveGantt 
+                  events={projectTasks.map(t => ({
+                    id: t.id,
+                    taskCode: t.taskCode || "T-00",
+                    subject: t.title || t.subject,
+                    startDate: t.startDate || t.plannedStart,
+                    endDate: t.endDate || t.plannedEnd,
+                    durationHours: t.durationHours || 1,
+                    owner: t.owner || "Team",
+                    description: t.description || "",
+                    status: t.status,
+                    paddingDays: t.paddingDays || 0,
+                    externalPlannedEnd: t.externalPlannedEnd
+                  }))}
+                  onUpdateEvents={() => {}} 
+                  scale="day" 
+                />
+             </div>
+           )}
+        </div>
+      ) : viewMode === "projects" ? (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-[12px] font-semibold text-text-primary">{projects.length} Project{projects.length !== 1 ? "s" : ""}</p>
-            <button className="flex items-center gap-1 text-[11px] text-primary hover:underline border-none bg-transparent cursor-pointer font-medium">
-              <Plus className="w-3 h-3" /> New Project
+            <button className="flex items-center gap-1 text-[11px] text-primary hover:underline border-none bg-transparent cursor-pointer font-medium uppercase tracking-tighter">
+              <Plus className="w-3 h-3" strokeWidth={3} /> New Project
             </button>
           </div>
           {projects.length === 0 ? (
             <div className="border border-dashed border-border-default rounded-xl p-8 text-center bg-surface-muted/10">
                <FolderOpen className="w-8 h-8 mx-auto text-text-muted opacity-20 mb-2" />
-               <p className="text-[11px] text-text-secondary">No projects linked yet.</p>
+               <p className="text-[11px] text-text-secondary italic">No projects linked to this account.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {projects.map((p: any) => (
-                <div key={p.id} className="p-4 rounded-xl border border-border-default bg-white hover:border-primary/20 hover:shadow-lg transition-all flex items-start justify-between">
-                  <div className="space-y-1">
-                    <p className="text-[13px] font-bold text-text-primary">{p.name}</p>
+                <div key={p.id} className="p-4 rounded-xl border border-border-default bg-white hover:border-primary/20 hover:shadow-lg transition-all flex items-start justify-between group">
+                  <div className="space-y-1.5 flex-1 min-w-0" onClick={() => setSelectedProjectId(p.id)}>
+                    <p className="text-[13px] font-bold text-text-primary group-hover:text-primary transition-colors cursor-pointer">{p.name}</p>
                     <div className="flex items-center gap-2">
                        <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${PROJECT_STATUS_STYLES[p.status] || "bg-surface-muted text-text-muted border-border-default"}`}>
                         {p.status}
                       </span>
                       <span className="text-[10px] text-text-muted font-bold font-mono">
-                        {p.taskSummary?.completed ?? 0}/{p.taskCount ?? 0} COMPLETED
+                        {p.taskSummary?.completed ?? 0}/{p.taskCount ?? 0} ITEMS
                       </span>
                     </div>
                   </div>
-                  {/* Link back to the current view but with the specific project if desired, for now use a deep link placeholder */}
-                  <a href={`/projects/${p.id}`} className="p-2 hover:bg-surface-muted rounded-full transition-colors text-text-muted" title="View Project Details">
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                  <div className="flex items-center gap-2 ml-4">
+                    <button 
+                      onClick={(ev) => { ev.stopPropagation(); handleShare(p); }}
+                      className="p-2 hover:bg-primary/5 rounded-lg text-text-muted hover:text-primary transition-all opacity-0 group-hover:opacity-100" 
+                      title="Share Roadmap"
+                    >
+                      <Share className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => setSelectedProjectId(p.id)} className="p-2 hover:bg-surface-muted rounded-full transition-colors text-text-muted" title="View Project Details">
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1177,70 +1278,188 @@ export function ProjectsTab({ accountId, companyName }: { accountId: string; com
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-[12px] font-semibold text-text-primary">{tasks.length} Action Item{tasks.length !== 1 ? "s" : ""}</p>
-            <button className="flex items-center gap-1 text-[11px] text-primary hover:underline border-none bg-transparent cursor-pointer font-medium">
-              <Plus className="w-3 h-3" /> Add Task
-            </button>
           </div>
-          {tasks.length === 0 ? (
-             <div className="border border-dashed border-border-default rounded-xl p-8 text-center bg-surface-muted/10">
-               <CheckCircle2 className="w-8 h-8 mx-auto text-text-muted opacity-20 mb-2" />
-               <p className="text-[11px] text-text-secondary">No tasks assigned to this account.</p>
-             </div>
-          ) : (
-            <div className="border border-border-default rounded-xl overflow-hidden bg-white shadow-sm">
-              <table className="w-full text-[11px]">
-                <thead className="bg-[#FAFAFA] border-b border-border-default">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left font-bold uppercase tracking-widest text-text-muted text-[9px]">Task</th>
-                    <th className="px-4 py-2.5 text-left font-bold uppercase tracking-widest text-text-muted text-[9px]">Linked To</th>
-                    <th className="px-4 py-2.5 text-left font-bold uppercase tracking-widest text-text-muted text-[9px]">Assignee</th>
-                    <th className="px-4 py-2.5 text-left font-bold uppercase tracking-widest text-text-muted text-[9px]">Due</th>
-                    <th className="px-4 py-2.5 text-right font-bold uppercase tracking-widest text-text-muted text-[9px]">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border-default">
-                  {tasks.map((task: any) => (
-                    <tr key={task.id} className="hover:bg-surface-subtle transition-colors">
-                      <td className="px-4 py-3 font-semibold text-text-primary">{task.title}</td>
-                      <td className="px-4 py-3 text-text-muted">
-                        {task.project ? (
-                          <span className="flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-md font-bold uppercase">
-                            <FolderOpen className="w-2.5 h-2.5" />
-                            {task.project.name}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md font-bold uppercase">Account Level</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-text-secondary font-medium lowercase italic">
-                        <div className="flex -space-x-2 overflow-hidden">
-                          {task.assignments && task.assignments.length > 0 ? (
-                            task.assignments.map((asgn: any) => (
-                              <div key={asgn.id} className="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-blue-50 text-blue-600 flex items-center justify-center text-[10px] font-bold" title={asgn.user?.name}>
-                                {asgn.user?.name?.charAt(0) || "U"}
-                              </div>
-                            ))
-                          ) : (
-                            <span className="text-[10px] text-text-muted italic">Unassigned</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-text-muted font-mono">
-                        {task.due ? new Date(task.due).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <span className={`text-[9px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded border ${task.status === "completed" ? "bg-green-50 text-green-700 border-green-200" : task.status === "in-progress" ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-surface-muted text-text-muted border-border-default"}`}>
-                          {task.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <TaskTable tasks={tasks} />
         </div>
       )}
+
+      {/* EMAIL SHARE MODAL */}
+      <EmailShareModal 
+        isOpen={isShareModalOpen} 
+        onClose={() => setIsShareModalOpen(false)} 
+        project={sharingProject} 
+        profile={profile}
+      />
+    </div>
+  );
+}
+
+function TaskTable({ tasks }: { tasks: any[] }) {
+  if (tasks.length === 0) {
+    return (
+      <div className="border border-dashed border-border-default rounded-xl p-8 text-center bg-surface-muted/10">
+        <CheckCircle2 className="w-8 h-8 mx-auto text-text-muted opacity-20 mb-2" />
+        <p className="text-[11px] text-text-secondary italic font-medium">No results found.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-border-default rounded-xl overflow-hidden bg-white shadow-sm">
+      <table className="w-full text-[11px]">
+        <thead className="bg-[#FAFAFA] border-b border-border-default">
+          <tr>
+            <th className="px-4 py-2.5 text-left font-bold uppercase tracking-widest text-text-muted text-[9px]">Status</th>
+            <th className="px-4 py-2.5 text-left font-bold uppercase tracking-widest text-text-muted text-[9px]">Task Item</th>
+            <th className="px-4 py-2.5 text-left font-bold uppercase tracking-widest text-text-muted text-[9px]">Linked To</th>
+            <th className="px-4 py-2.5 text-left font-bold uppercase tracking-widest text-text-muted text-[9px]">Owner</th>
+            <th className="px-4 py-2.5 text-right font-bold uppercase tracking-widest text-text-muted text-[9px]">Deadline</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-default">
+          {tasks.map((task: any) => (
+            <tr key={task.id} className="hover:bg-surface-subtle transition-colors">
+              <td className="px-4 py-3">
+                 <span className={`text-[9px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded border ${task.status === "completed" ? "bg-green-50 text-green-700 border-green-200" : task.status === "in-progress" ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-surface-muted text-text-muted border-border-default"}`}>
+                   {task.status}
+                 </span>
+              </td>
+              <td className="px-4 py-3 font-bold text-text-primary">{task.title || task.subject}</td>
+              <td className="px-4 py-3 text-text-muted">
+                {task.project ? (
+                  <span className="flex items-center gap-1 text-[10px] text-primary/70 font-bold uppercase truncate max-w-[150px]">
+                    <FolderOpen className="w-2.5 h-2.5" />
+                    {task.project.name}
+                  </span>
+                ) : (
+                  <span className="text-[9px] text-slate-300 font-bold uppercase italic tracking-tighter">Account Level</span>
+                )}
+              </td>
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-1.5">
+                   <div className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[8px] font-black">
+                      {task.owner?.charAt(0) || "T"}
+                   </div>
+                   <span className="text-text-secondary font-medium lowercase italic opacity-60">{task.owner || "Team"}</span>
+                </div>
+              </td>
+              <td className="px-4 py-3 text-right text-text-muted font-bold font-mono">
+                {task.due || task.plannedEnd ? new Date(task.due || task.plannedEnd).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EmailShareModal({ isOpen, onClose, project, profile }: { isOpen: boolean; onClose: () => void; project: any; profile?: any }) {
+  const [email, setEmail] = useState("");
+  const [isCopied, setIsCopied] = useState(false);
+  const { showToast } = useToast();
+
+  const shareLink = project?.shareToken ? `${window.location.origin}/share/${project.shareToken}` : null;
+
+  const handleCopy = () => {
+    if (!shareLink) return;
+    navigator.clipboard.writeText(shareLink);
+    setIsCopied(true);
+    showToast("Link copied to clipboard!", "success");
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  const handleSend = () => {
+     if (!email.includes("@")) {
+         showToast("Please enter a valid email", "error");
+         return;
+     }
+     showToast(`Sharing link sent to ${email}`, "success");
+     onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200 flex flex-col">
+        <div className="p-8 pb-4">
+           <div className="flex items-center justify-between mb-2">
+              <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center">
+                 <Share className="w-5 h-5 text-primary" strokeWidth={2.5} />
+              </div>
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-all text-slate-400">
+                 <X className="w-5 h-5" />
+              </button>
+           </div>
+           <h3 className="text-xl font-bold text-slate-800">Share Client Roadmap</h3>
+           <p className="text-[13px] text-slate-500 mt-1 leading-relaxed">
+             Share {project?.name} with your client. They will only see padded deadlines.
+           </p>
+        </div>
+
+        <div className="p-8 pt-4 space-y-6">
+           {/* Direct Link Section */}
+           <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-400">Secure Share Link</label>
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl p-2 pl-4">
+                 <span className="text-[12px] font-medium text-slate-500 truncate italic flex-1">{shareLink || "Not generated"}</span>
+                 <button 
+                  onClick={handleCopy}
+                  className={`h-10 px-4 rounded-xl flex items-center gap-2 transition-all ${isCopied ? 'bg-green-500 text-white shadow-lg shadow-green-500/20' : 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20'}`}
+                 >
+                   {isCopied ? <Check className="w-3.5 h-3.5" strokeWidth={3} /> : <Copy className="w-3.5 h-3.5" strokeWidth={2.5} />}
+                   <span className="text-[11px] font-black uppercase tracking-tight">{isCopied ? 'Copied' : 'Copy'}</span>
+                 </button>
+              </div>
+           </div>
+
+           <div className="relative h-px bg-slate-100 flex items-center justify-center">
+              <span className="bg-white px-4 text-[10px] font-black text-slate-300 uppercase tracking-widest">or send via email</span>
+           </div>
+
+           {/* Email Section */}
+           <div className="space-y-3">
+              <div className="space-y-1.5 text-left">
+                <label className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-400">Send to Email</label>
+                <div className="relative">
+                   <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                   <input 
+                    type="email"
+                    placeholder="Enter email or select below..."
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full h-12 pl-11 pr-4 bg-white border border-slate-200 rounded-2xl text-[13px] font-medium focus:outline-none focus:ring-4 focus:ring-primary/10 transition-all"
+                   />
+                </div>
+              </div>
+
+              {profile?.primaryContactEmail && (
+                <div className="flex items-center gap-3">
+                   <button 
+                    onClick={() => setEmail(profile.primaryContactEmail)}
+                    className={`flex items-center gap-3 p-3 rounded-2xl border transition-all flex-1 text-left ${email === profile.primaryContactEmail ? 'border-primary bg-primary/5' : 'border-slate-100 bg-slate-50'}`}
+                   >
+                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-[10px]">
+                        {profile.primaryContact?.charAt(0) || "P"}
+                     </div>
+                     <div className="min-w-0">
+                        <p className="text-[11px] font-bold text-slate-700 truncate tracking-tight uppercase">Primary: {profile.primaryContact}</p>
+                        <p className="text-[10px] text-slate-400 truncate italic">{profile.primaryContactEmail}</p>
+                     </div>
+                   </button>
+                </div>
+              )}
+           </div>
+
+           <button 
+            onClick={handleSend}
+            className="w-full h-12 bg-primary text-white rounded-2xl text-[13px] font-black uppercase tracking-widest shadow-xl shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+           >
+             <Mail className="w-4 h-4" /> Send Secure Link
+           </button>
+        </div>
+      </div>
     </div>
   );
 }

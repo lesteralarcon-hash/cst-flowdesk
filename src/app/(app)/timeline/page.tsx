@@ -14,6 +14,8 @@ import { PremiumSpinner } from "@/components/ui/PremiumSpinner";
 import { useToast } from "@/components/ui/ToastContext";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
 import TaskDetailModal from "@/components/tasks/TaskDetailModal";
+import BufferModal from "@/components/timeline/BufferModal";
+import { calculateClientEndDate } from "@/lib/utils/business-days";
 
 export default function TimelinePage() {
   return (
@@ -79,6 +81,12 @@ function TimelineApp() {
   const [members, setMembers] = useState<any[]>([]);
   const [assignedIds, setAssignedIds] = useState<string[]>([]);
   const [selectedTask, setSelectedTask] = useState<TimelineEvent | null>(null);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  
+  // BUFFER MODAL STATE
+  const [bufferTaskId, setBufferTaskId] = useState<string | null>(null);
+  const [isBufferModalOpen, setIsBufferModalOpen] = useState(false);
+  
   const [shareLink, setShareLink] = useState<string | null>(null);
   const mermaidRef = useRef<HTMLDivElement>(null);
   const interactiveGanttRef = useRef<HTMLDivElement>(null);
@@ -137,10 +145,9 @@ function TimelineApp() {
     const params = new URLSearchParams(window.location.search);
     const pId = params.get("projectId");
     if (pId) {
-      fetch(`/api/projects?id=${pId}`) // I need to ensure the GET /api/projects can handle single project
+      fetch(`/api/projects?id=${pId}`)
         .then(res => res.json())
         .then(data => {
-            // Find project in the list if GET returns all, or handle single if I update API
             if (Array.isArray(data)) {
                 const proj = data.find(p => p.id === pId);
                 if (proj) {
@@ -148,7 +155,6 @@ function TimelineApp() {
                     setSelectedTemplateId(proj.templateId || "");
                     setStartDate(new Date(proj.startDate).toISOString().split("T")[0]);
                     
-                    // Fetch items for this project as well
                     fetch(`/api/tasks?projectId=${pId}`)
                         .then(r => r.json())
                         .then(items => {
@@ -171,7 +177,6 @@ function TimelineApp() {
         });
     }
     
-    // Show walkthrough on first run
     const seen = localStorage.getItem("timeline_walkthrough_seen");
     if (!seen) {
       setShowWalkthrough(true);
@@ -191,15 +196,42 @@ function TimelineApp() {
           console.error("Mermaid error:", e);
         }
       };
-      // Short delay ensures DOM is ready for rendering
       setTimeout(renderGantt, 50);
     }
   }, [activeTab, viewMode, events, projectName]);
 
-  const updateEvent = (index: number, updated: Partial<TimelineEvent>) => {
-    const newEvents = [...events];
-    newEvents[index] = { ...newEvents[index], ...updated };
-    setEvents(newEvents);
+  const handleUpdateEvents = (newEvents: TimelineEvent[]) => setEvents(newEvents);
+
+  const handleTaskClick = (id: string) => {
+    const ev = events.find(e => e.id === id);
+    if (ev) {
+      setSelectedTask(ev);
+      setIsTaskModalOpen(true);
+    }
+  };
+
+  const handleAddBuffer = (taskId: string) => {
+    setBufferTaskId(taskId);
+    setIsBufferModalOpen(true);
+  };
+
+  const handleSaveBuffer = (padding: number) => {
+    if (!bufferTaskId) return;
+    
+    setEvents(prev => prev.map(ev => {
+      if (ev.id === bufferTaskId) {
+        const externalEnd = calculateClientEndDate(ev.endDate, padding);
+        return {
+          ...ev,
+          paddingDays: padding,
+          externalPlannedEnd: externalEnd || ev.endDate
+        };
+      }
+      return ev;
+    }));
+    
+    setIsBufferModalOpen(false);
+    setBufferTaskId(null);
   };
 
   const generateTimeline = async (e: React.FormEvent) => {
@@ -227,11 +259,24 @@ function TimelineApp() {
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && Array.isArray(data)) {
-        setEvents(data.map((e: any, i: number) => ({ ...e, id: e.id || `gen-${i}-${Date.now()}` })));
+      const result = await res.json();
+      if (res.ok && Array.isArray(result.tasks)) {
+        const finalEvents: TimelineEvent[] = (result.tasks || []).map((t: any, i: number) => {
+          const padding = 0; // REQ: Removed 3-day global default
+          const externalEnd = calculateClientEndDate(t.endDate, padding);
+          
+          return {
+            ...t,
+            id: t.id || `temp-${Date.now()}-${i}`,
+            paddingDays: padding,
+            externalPlannedEnd: externalEnd || t.endDate,
+            depth: t.depth || 0,
+            expanded: true
+          };
+        });
+        setEvents(finalEvents);
       } else {
-        const raw: string = data.error || "Unknown error";
+        const raw: string = result.error || "Unknown error";
         let friendly = raw;
         if (raw.includes("429") || raw.includes("quota") || raw.includes("Too Many Requests")) {
           friendly = "AI quota exceeded. Go to Admin → Settings and switch to Groq (free) or check your current provider's limits.";
@@ -348,7 +393,6 @@ function TimelineApp() {
     try {
       const element = interactiveGanttRef.current;
       
-      // Target the internal scroll container for full dimensions
       const scrollContainer = element.querySelector('.overflow-auto') as HTMLElement;
       if (!scrollContainer) return;
 
@@ -356,7 +400,6 @@ function TimelineApp() {
       const originalWidth = element.style.width;
       const originalOverflow = scrollContainer.style.overflow;
 
-      // Temporarily expand to full scroll size for capture
       element.style.height = `${scrollContainer.scrollHeight}px`;
       element.style.width = `${scrollContainer.scrollWidth}px`;
       scrollContainer.style.overflow = 'visible';
@@ -370,7 +413,6 @@ function TimelineApp() {
         }
       });
 
-      // Revert styles
       element.style.height = originalHeight;
       element.style.width = originalWidth;
       scrollContainer.style.overflow = originalOverflow;
@@ -389,7 +431,6 @@ function TimelineApp() {
     <div className={`flex flex-col h-full overflow-hidden transition-opacity duration-1000 ${isLaunched ? 'opacity-100' : 'opacity-0'}`}>
       <div className="flex flex-1 overflow-hidden bg-surface-subtle">
 
-      {/* Sidebar: Project Setup Form - Compact */}
       <div className="w-[280px] shrink-0 border-r bg-surface-default flex flex-col shadow-xl z-20">
         <div className="p-4 border-b bg-surface-subtle">
           <h1 className="text-sm font-black tracking-tight text-text-primary flex items-center gap-2 uppercase">
@@ -504,11 +545,9 @@ function TimelineApp() {
         </div>
       </div>
 
-      {/* Main Canvas Area */}
       <div className="flex-1 relative flex flex-col bg-surface-muted overflow-hidden">
         {events.length > 0 ? (
           <div className="h-full flex flex-col">
-            {/* Toolbar - Compact */}
             <div className="h-12 bg-surface-default border-b border-border-default px-4 flex items-center justify-between shrink-0 shadow-sm z-30">
                <div className="flex bg-surface-muted p-1 rounded-lg border border-border-default">
                  <button onClick={() => setActiveTab("gantt")} className={`px-3 py-1 text-[10px] font-black uppercase tracking-tight rounded-md transition-all ${activeTab === "gantt" ? "bg-surface-default shadow-sm text-primary" : "text-text-secondary hover:text-text-primary"}`}>
@@ -573,7 +612,6 @@ function TimelineApp() {
                </div>
             </div>
 
-            {/* Viewport */}
             <div className="flex-1 overflow-auto p-4 md:p-8 relative min-h-0 bg-surface-muted">
               {activeTab === "gantt" && viewMode === "static" && (
                 <div className="w-full bg-surface-default p-12 rounded-[2rem] border border-border-default shadow-2xl flex flex-col items-center min-h-[600px] overflow-x-auto">
@@ -589,16 +627,16 @@ function TimelineApp() {
                           <StitchLoading />
                        </div>
                     ) : (
-                        <InteractiveGantt 
-                           events={events} 
-                           onUpdateEvents={setEvents} 
-                           scale={scale} 
-                           ganttRef={interactiveGanttRef} 
-                           onTaskClick={(id) => {
-                             const ev = events.find(e => e.id === id);
-                             if (ev) setSelectedTask(ev);
-                           }}
-                        />
+                        <div className="flex-1 min-h-0 bg-white">
+                          <InteractiveGantt 
+                            events={events} 
+                            onUpdateEvents={handleUpdateEvents}
+                            onTaskClick={handleTaskClick}
+                            onUpdateBuffer={handleAddBuffer}
+                            scale={scale}
+                            ganttRef={interactiveGanttRef}
+                          />
+                        </div>
                     )}
                  </div>
                )}

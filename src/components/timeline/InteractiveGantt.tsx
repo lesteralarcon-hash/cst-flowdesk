@@ -28,11 +28,22 @@ interface InteractiveGanttProps {
   onReschedule?: (id: string, newStart: string, newEnd: string) => void;
   onToggleExpand?: (id: string) => void;
   onAllocateHours?: (taskId: string, taskSubject: string, durationHours: number) => void;
+  onUpdateBuffer?: (taskId: string, currentPadding: number) => void;
   scale: "day" | "week" | "month";
   ganttRef?: React.RefObject<HTMLDivElement>;
 }
 
-export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, onReschedule, onToggleExpand, onAllocateHours, scale, ganttRef }: InteractiveGanttProps) {
+export default function InteractiveGantt({ 
+  events, 
+  onUpdateEvents, 
+  onTaskClick, 
+  onReschedule, 
+  onToggleExpand, 
+  onAllocateHours, 
+  onUpdateBuffer,
+  scale, 
+  ganttRef 
+}: InteractiveGanttProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -73,13 +84,14 @@ export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, 
   const { minDate, maxDate } = useMemo(() => {
     if (events.length === 0) return { minDate: new Date(), maxDate: new Date() };
     const starts = events.map(e => new Date(e.startDate).getTime());
-    const ends = events.map(e => new Date(e.endDate).getTime());
+    const ends = events.map(e => new Date(e.endDate || e.startDate).getTime());
+    const extEnds = events.map(e => e.externalPlannedEnd ? new Date(e.externalPlannedEnd).getTime() : 0);
     const min = new Date(Math.min(...starts));
-    const max = new Date(Math.max(...ends));
+    const max = new Date(Math.max(...ends, ...extEnds));
     const start = new Date(min);
-    start.setDate(start.getDate() - 2); 
+    start.setDate(start.getDate() - 3); 
     const end = new Date(max);
-    end.setDate(end.getDate() + 2);
+    end.setDate(end.getDate() + 3);
     return { minDate: start, maxDate: end };
   }, [events]);
 
@@ -198,7 +210,7 @@ export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, 
   };
 
   return (
-    <div ref={ganttRef} className="flex flex-col h-full bg-white shadow-2xl rounded-[1.5rem] overflow-hidden border border-slate-200">
+    <div ref={ganttRef} className="flex flex-col h-full bg-white shadow-2xl rounded-[1.5rem] overflow-hidden border border-slate-200" style={{ "--col-width": `${colWidth}px` } as any}>
       <div className="flex-1 overflow-auto relative font-sans scroll-smooth thin-scrollbar" ref={containerRef}>
         <div style={{ width: (dates.length / dayStep) * colWidth + 400 }} className="min-h-full flex flex-col">
           
@@ -219,7 +231,7 @@ export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, 
                <div className="w-[320px] shrink-0 sticky left-0 z-[70] bg-slate-50/80 border-r" />
                <div className="flex">
                  {dates.filter((_, idx) => idx % dayStep === 0).map((d, i) => (
-                    <div key={i} style={{ width: colWidth }} className={`border-r h-full flex items-center justify-center text-[9px] font-bold uppercase ${isToday(d) ? 'bg-primary/10 text-primary border-primary/20' : 'text-slate-400'} border-slate-100`}>
+                    <div key={i} style={{ width: "var(--col-width)" }} className={`border-r h-full flex items-center justify-center text-[9px] font-bold uppercase ${isToday(d) ? 'bg-primary/10 text-primary border-primary/20' : 'text-slate-400'} border-slate-100`}>
                       {scale === "day" ? d.getDate() : scale === "week" ? `Wk ${Math.ceil(d.getDate() / 7)}` : d.toLocaleDateString("en", { month: "short" })}
                     </div>
                  ))}
@@ -230,7 +242,9 @@ export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, 
           <div className="relative flex-1">
             <div className="absolute top-0 left-[320px] bottom-0 pointer-events-none z-0 flex">
               {dates.filter((_, idx) => idx % dayStep === 0).map((d, i) => (
-                <div key={i} style={{ width: colWidth }} className={`h-full border-r border-slate-50 ${isWeekend(d) && scale === "day" ? 'bg-slate-50/30' : ''}`} />
+                <div key={i} style={{ width: "var(--col-width)" }} className={`h-full border-r border-slate-50 ${isWeekend(d) && scale === "day" ? 'bg-slate-50/10' : ''}`}>
+                   {isWeekend(d) && scale === "day" && <div className="w-full h-full bg-slate-100 opacity-[0.2]" />}
+                </div>
               ))}
             </div>
 
@@ -267,13 +281,24 @@ export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, 
                             className="text-[11px] font-bold uppercase tracking-tight flex-1 min-w-0 bg-primary/10 border border-primary/30 rounded px-1 py-0.5 text-primary outline-none focus:ring-1 focus:ring-primary/50"
                           />
                         ) : (
-                          <span
-                            className={`text-[11px] font-bold text-slate-700 uppercase tracking-tight truncate flex-1 ${isCompleted ? 'text-slate-400' : ''}`}
-                            onDoubleClick={(ev) => startRename(ev, e)}
-                            title="Double-click to rename"
-                          >
-                            {e.subject}
-                          </span>
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <span
+                              className={`text-[11px] font-bold text-slate-700 uppercase tracking-tight truncate flex-1 ${isCompleted ? 'text-slate-400' : ''}`}
+                              onDoubleClick={(ev) => startRename(ev, e)}
+                              title="Double-click to rename"
+                            >
+                              {e.subject}
+                            </span>
+                            {onUpdateBuffer && (
+                               <button 
+                                 onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer(e.id, e.paddingDays || 0); }}
+                                 className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-primary transition-all rounded hover:bg-primary/5 shadow-sm"
+                                 title="Add/Edit Client Buffer"
+                               >
+                                 <Plus className="w-2.5 h-2.5" strokeWidth={3} />
+                               </button>
+                            )}
+                          </div>
                         )}
                       </div>
                       <div className="flex items-center gap-2.5 mt-1" style={{ marginLeft: (depth * 20) + 24 }}>
@@ -290,25 +315,13 @@ export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, 
                          >
                            <Plus className="w-2.5 h-2.5" />
                          </button>
-                         {onAllocateHours && (
-                           <button
-                             onClick={(ev) => {
-                               ev.stopPropagation();
-                               onAllocateHours(e.id, e.subject, e.durationHours);
-                             }}
-                             className="opacity-0 group-hover:opacity-100 p-1 hover:bg-amber-50 rounded transition-all text-amber-500"
-                             title="Allocate Hours as Sub-tasks"
-                           >
-                             <Timer className="w-2.5 h-2.5" />
-                           </button>
-                         )}
                       </div>
                     </div>
 
                     <div className="flex-1 relative h-full flex items-center">
                          {/* MAIN INTERNAL BAR */}
                          <div 
-                          style={{ left: pos.left, width: pos.width }}
+                          style={{ left: `calc(${pos.left}px)`, width: `calc(${pos.width}px)` }}
                           onMouseDown={(ev) => handleDragStart(index, "move", ev.clientX)}
                           className={`absolute top-2.5 bottom-2.5 bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-lg shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-20 transition-all ${isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-80 cursor-move border-dashed hover:opacity-100'}`}
                         >
@@ -326,14 +339,15 @@ export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, 
                             const extPos = calculatePosition(e.endDate, e.externalPlannedEnd);
                             return (
                               <div 
+                                onClick={(ev) => { ev.stopPropagation(); onUpdateBuffer?.(e.id, e.paddingDays || 0); }}
                                 style={{ 
-                                  left: pos.left + pos.width - 4, // Slight overlap for visual connection
-                                  width: extPos.width + 4
+                                  left: `calc((${pos.left} + ${pos.width}) * 1px - 4px)`, 
+                                  width: `calc(${extPos.width}px + 4px)`
                                 }}
-                                className="absolute top-4 bottom-4 bg-orange-400/40 border border-orange-400/60 rounded-r-lg z-10 flex items-center justify-end px-2"
-                                title={`Client Buffer until ${e.externalPlannedEnd}`}
+                                className="absolute top-4 bottom-4 bg-orange-400/40 border border-orange-400/60 rounded-r-lg z-10 flex items-center justify-end px-2 cursor-pointer hover:bg-orange-400/50 transition-all"
+                                title={`Client Buffer until ${e.externalPlannedEnd}. Click to edit.`}
                               >
-                                <span className="text-[8px] font-bold text-orange-600 hidden group-hover:block">ALLOWANCE</span>
+                                <span className="text-[8px] font-bold text-orange-600 hidden group-hover:block">LEG ROOM</span>
                               </div>
                             );
                           })()
