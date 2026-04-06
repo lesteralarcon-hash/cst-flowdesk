@@ -4,6 +4,7 @@ import { projects as projectsTable, timelineItems as timelineItemsTable, timelin
 import { auth } from "@/auth";
 import { eq, desc, or, like } from "drizzle-orm";
 import { calculateClientEndDate } from "@/lib/utils/business-days";
+import { ensureUserInDb } from "@/lib/utils/auth-sync";
 import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,9 @@ export async function POST(req: Request) {
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // ENSURE: Synchronize user with DB to prevent FK failure
+    await ensureUserInDb(session);
 
     const { name, startDate, templateId, clientProfileId, events, assignedIds } = await req.json();
 

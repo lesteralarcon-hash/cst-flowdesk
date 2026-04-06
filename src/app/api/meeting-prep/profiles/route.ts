@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { clientProfiles as clientProfilesTable, meetingPrepSessions as meetingPrepSessionsTable, users as usersTable } from "@/db/schema";
 import { auth } from "@/auth";
 import { eq, desc, inArray } from "drizzle-orm";
+import { ensureUserInDb } from "@/lib/utils/auth-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -89,25 +90,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // Ensure the user record exists before creating profile (prevents FK error)
-    try {
-      const existingUser = await db.select({ id: usersTable.id })
-        .from(usersTable)
-        .where(eq(usersTable.id, userId))
-        .limit(1);
-      
-      if (existingUser.length === 0) {
-        await db.insert(usersTable).values({
-          id: userId,
-          name: session.user.name || "CST User",
-          email: session.user.email || `unknown_${Date.now()}@cst.com`,
-          role: (session.user as any).role || "user",
-          status: "active",
-        });
-      }
-    } catch (e) {
-      console.warn("Profiles: User ensure failed (non-critical):", e);
-    }
+    // ENSURE: Synchronize user with DB to prevent FK failure
+    await ensureUserInDb(session);
 
     const id = `cp_${Date.now()}`;
     const now = new Date().toISOString();
