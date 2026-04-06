@@ -34,10 +34,25 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
   
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [aiAppsOpen, setAiAppsOpen] = useState(isInsideAiApp);
+  const [tasksOpen, setTasksOpen] = useState(pathname?.startsWith("/tasks"));
+  const [projects, setProjects] = useState<any[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
 
-  // Sync open state when navigating to a sub-app via external link or back button
+  // Global Data Fetch: Projects for Sidebar
+  useEffect(() => {
+    if (!user) return;
+    setProjectsLoading(true);
+    fetch("/api/projects")
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setProjects(Array.isArray(data) ? data : []))
+      .catch(() => setProjects([]))
+      .finally(() => setProjectsLoading(false));
+  }, [user]);
+
+  // Sync open state when navigating
   useEffect(() => {
     if (isInsideAiApp) setAiAppsOpen(true);
+    if (pathname?.startsWith("/tasks")) setTasksOpen(true);
   }, [pathname, isInsideAiApp]);
 
   if (!user) return null;
@@ -114,9 +129,53 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
               )}
             </div>
 
-            <ForceLink href="/tasks" className={`left-nav-item mt-1 ${isActive("/tasks") ? "active" : ""}`}>
-              <Zap size={14} /> <span>Tasks</span>
-            </ForceLink>
+            <div className="mt-1">
+              <div className="flex items-center">
+                <ForceLink 
+                  href="/tasks" 
+                  className={`flex-1 left-nav-item !mr-0 ${isActive("/tasks") && !pathname?.includes("?project=") ? "active" : ""}`}
+                >
+                  <Zap size={14} /> <span>Tasks</span>
+                </ForceLink>
+                <button 
+                  onClick={(e) => { e.preventDefault(); setTasksOpen(!tasksOpen); }}
+                  className={`p-1.5 hover:bg-slate-100 rounded text-slate-400 transition-transform duration-200 ${tasksOpen ? "rotate-180" : ""}`}
+                >
+                  <ChevronDown size={12} />
+                </button>
+              </div>
+
+              {tasksOpen && (
+                <div className="ml-4 mt-0.5 space-y-0.5 border-l border-slate-100 pl-2">
+                  <ForceLink 
+                    href="/tasks" 
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${isActive("/tasks") && !pathname?.includes("?project=") ? "text-primary bg-primary/10 font-bold" : "text-slate-500 hover:bg-slate-50"}`}
+                  >
+                    <LayoutDashboard size={12} />
+                    <span>My Dashboard</span>
+                  </ForceLink>
+                  
+                  {projectsLoading ? (
+                    <div className="px-2 py-1 text-[10px] text-slate-300 animate-pulse uppercase font-bold tracking-widest">Loading Projects…</div>
+                  ) : projects.length === 0 ? (
+                    <div className="px-2 py-1 text-[10px] text-slate-300 uppercase font-bold tracking-widest">No active roadmaps</div>
+                  ) : projects.map(p => {
+                    const projectHref = `/tasks?project=${p.id}`;
+                    const active = pathname?.startsWith("/tasks") && pathname?.includes(`project=${p.id}`);
+                    return (
+                      <ForceLink 
+                        key={p.id} 
+                        href={projectHref} 
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition-colors ${active ? "text-primary bg-primary/10 font-bold" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}
+                      >
+                        <div className={`w-1.5 h-1.5 rounded-full ${active ? "bg-primary" : "bg-slate-200"}`} />
+                        <span className="truncate">{p.name}</span>
+                      </ForceLink>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {user.role === "admin" && (
               <div className="mt-4 border-t pt-2">

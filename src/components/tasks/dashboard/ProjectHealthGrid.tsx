@@ -1,6 +1,7 @@
 "use client";
 
 import { CheckCircle2, AlertTriangle, Clock } from "lucide-react";
+import ForceLink from "@/components/ui/ForceLink";
 
 interface ProjectHealth {
   projectId: string;
