@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { projects as projectsTable, timelineItems as timelineItemsTable, timelineTemplates as timelineTemplatesTable } from "@/db/schema";
 import { auth } from "@/auth";
 import { eq, desc, or, like } from "drizzle-orm";
+import { calculateClientEndDate } from "@/lib/utils/business-days";
+import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +41,8 @@ export async function POST(req: Request) {
         startDate: new Date(startDate).toISOString(),
         templateId: templateId || null,
         assignedIds: assignedIds ? (Array.isArray(assignedIds) ? assignedIds.join(",") : assignedIds) : null,
+        defaultPaddingDays: 3, 
+        shareToken: crypto.randomUUID(),
         status: "active",
         createdAt: nowStr,
         updatedAt: nowStr,
@@ -55,6 +59,7 @@ export async function POST(req: Request) {
             subject: event.subject,
             plannedStart: new Date(event.startDate).toISOString(),
             plannedEnd: new Date(event.endDate).toISOString(),
+            externalPlannedEnd: calculateClientEndDate(event.endDate, 3), // Initial default padding
             durationHours: event.durationHours || 8,
             owner: event.owner || null,
             description: event.description || null,

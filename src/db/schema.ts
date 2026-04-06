@@ -110,6 +110,8 @@ export const projects = sqliteTable("Project", {
   startDate:        text("startDate").notNull(),
   status:           text("status").default("active").notNull(),
   templateId:       text("templateId").references(() => timelineTemplates.id),
+  defaultPaddingDays: integer("defaultPaddingDays").default(3).notNull(),
+  shareToken:       text("shareToken").unique().$defaultFn(() => crypto.randomUUID()),
   createdBy:        text("createdBy"),
   createdAt:        text("createdAt").default(sql`(datetime('now'))`).notNull(),
   updatedAt:        text("updatedAt").default(sql`(datetime('now'))`).notNull(),
@@ -154,6 +156,8 @@ export const timelineItems = sqliteTable("TimelineItem", {
   description:   text("description"),
   status:        text("status").default("pending").notNull(),
   sortOrder:     integer("sortOrder").default(0).notNull(),
+  paddingDays:   integer("paddingDays"), // Override per task
+  externalPlannedEnd: text("externalPlannedEnd"), // Calculated: plannedEnd + paddingDays (skipping weekends)
   archived:      integer("archived", { mode: "boolean" }).default(false).notNull(),
 
   // Hierarchy

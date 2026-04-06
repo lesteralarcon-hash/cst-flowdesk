@@ -17,6 +17,8 @@ interface TimelineEvent {
   depth?: number;
   expanded?: boolean;
   hasChildren?: boolean;
+  paddingDays?: number;
+  externalPlannedEnd?: string;
 }
 
 interface InteractiveGanttProps {
@@ -304,18 +306,38 @@ export default function InteractiveGantt({ events, onUpdateEvents, onTaskClick, 
                     </div>
 
                     <div className="flex-1 relative h-full flex items-center">
-                        <div 
-                         style={{ left: pos.left, width: pos.width }}
-                         onMouseDown={(ev) => handleDragStart(index, "move", ev.clientX)}
-                         className={`absolute top-2.5 bottom-2.5 bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-lg shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-10 transition-all ${isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-60 cursor-move border-dashed hover:opacity-100'}`}
-                       >
-                          {!isCompleted && (
-                            <>
-                              <div className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-20" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "left", ev.clientX); }} />
-                              <div className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-20" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "right", ev.clientX); }} />
-                            </>
-                          )}
-                       </div>
+                         {/* MAIN INTERNAL BAR */}
+                         <div 
+                          style={{ left: pos.left, width: pos.width }}
+                          onMouseDown={(ev) => handleDragStart(index, "move", ev.clientX)}
+                          className={`absolute top-2.5 bottom-2.5 bg-gradient-to-r ${getProjectGradient(e.projectName, e.id)} rounded-lg shadow-sm border border-black/5 flex flex-col justify-center px-4 text-white z-20 transition-all ${isCompleted ? 'opacity-100 shadow-md ring-1 ring-black/5' : 'opacity-80 cursor-move border-dashed hover:opacity-100'}`}
+                        >
+                           {!isCompleted && (
+                             <>
+                               <div className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "left", ev.clientX); }} />
+                               <div className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/30 active:bg-white/50 z-30" onMouseDown={(ev) => { ev.stopPropagation(); handleDragStart(index, "right", ev.clientX); }} />
+                             </>
+                           )}
+                        </div>
+
+                        {/* EXTERNAL PADDING BAR (ORANGE) */}
+                        {e.externalPlannedEnd && (
+                          (() => {
+                            const extPos = calculatePosition(e.endDate, e.externalPlannedEnd);
+                            return (
+                              <div 
+                                style={{ 
+                                  left: pos.left + pos.width - 4, // Slight overlap for visual connection
+                                  width: extPos.width + 4
+                                }}
+                                className="absolute top-4 bottom-4 bg-orange-400/40 border border-orange-400/60 rounded-r-lg z-10 flex items-center justify-end px-2"
+                                title={`Client Buffer until ${e.externalPlannedEnd}`}
+                              >
+                                <span className="text-[8px] font-bold text-orange-600 hidden group-hover:block">ALLOWANCE</span>
+                              </div>
+                            );
+                          })()
+                        )}
                     </div>
                   </div>
                 );
