@@ -60,7 +60,7 @@ export async function POST(req: Request) {
         internalInCharge: userId,
         createdBy: userId,
         defaultPaddingDays: 3, 
-        shareToken: crypto.randomUUID(),
+        shareToken: crypto.randomBytes(16).toString("hex"),
         status: "active",
         createdAt: nowStr,
         updatedAt: nowStr,
@@ -123,12 +123,21 @@ export async function GET(req: Request) {
     const userId = session?.user?.id;
     const userRole = session?.user?.role;
     
+    const { searchParams } = new URL(req.url);
+    const shareToken = searchParams.get('shareToken');
+    const projectId = searchParams.get('id');
+
+    // PUBLIC ACCESS VIA SHARE TOKEN
+    if (shareToken) {
+        const publicProject = await db.select().from(projectsTable).where(eq(projectsTable.shareToken, shareToken)).limit(1);
+        if (publicProject.length === 0) return NextResponse.json({ error: "Invalid share token" }, { status: 404 });
+        return NextResponse.json({ project: publicProject[0], isPublic: true });
+    }
+
     if (!userId) {
       console.warn("[api/projects] Unauthorized access attempt.");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    const { searchParams } = new URL(req.url);
     const filter = searchParams.get('filter');
     // EXPLICIT LOGIC: Admins see all. Owners see their own. Assigned users see assigned.
     const isAdmin = (userRole?.toLowerCase() === "admin");

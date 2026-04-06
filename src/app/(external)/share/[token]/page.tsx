@@ -119,8 +119,10 @@ export default function ClientPortalPage({ params }: { params: { token: string }
                                     <span className="text-xs font-semibold text-slate-600">{new Date(task.startDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
                                 </div>
                                 <div className="flex flex-col">
-                                    <span className="text-[9px] font-bold text-primary uppercase tracking-widest">Planned Completion</span>
-                                    <span className="text-xs font-bold text-primary">{new Date(task.plannedEnd).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                                    <span className="text-[9px] font-bold text-primary uppercase tracking-widest">Target Completion</span>
+                                    <span className="text-xs font-bold text-primary italic">
+                                        {new Date(task.externalPlannedEnd || task.plannedEnd).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -168,7 +170,11 @@ export default function ClientPortalPage({ params }: { params: { token: string }
           </div>
           <div className="h-[500px]">
              <InteractiveGantt 
-               events={project.tasks.map((t: any) => ({ ...t, endDate: t.plannedEnd }))} // Map external end as the only visible end
+               events={project.tasks.map((t: any) => ({ 
+                 ...t, 
+                 endDate: (t.externalPlannedEnd || t.plannedEnd).split('T')[0],
+                 startDate: t.startDate.split('T')[0]
+               }))} 
                onUpdateEvents={() => {}} // Read-only
                scale="day"
              />

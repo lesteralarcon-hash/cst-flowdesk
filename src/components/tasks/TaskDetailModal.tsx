@@ -31,9 +31,19 @@ interface TaskDetailModalProps {
   onClose: () => void;
   onUpdated: () => void;
   onAllocateHours?: (task: any) => void;
+  onLocalUpdate?: (updatedFields: any) => void;
+  isLocal?: boolean;
 }
 
-export default function TaskDetailModal({ task, kanbanBoard, onClose, onUpdated, onAllocateHours }: TaskDetailModalProps) {
+export default function TaskDetailModal({ 
+  task, 
+  kanbanBoard, 
+  onClose, 
+  onUpdated, 
+  onAllocateHours,
+  onLocalUpdate,
+  isLocal = false
+}: TaskDetailModalProps) {
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<"details" | "history" | "subtasks" | "recurring">("details");
 
@@ -56,7 +66,7 @@ export default function TaskDetailModal({ task, kanbanBoard, onClose, onUpdated,
   const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
-    if (activeTab === "history") {
+    if (activeTab === "history" && !isLocal) {
       setHistoryLoading(true);
       fetch(`/api/tasks/${task.id}`)
         .then(r => r.json())
@@ -75,6 +85,8 @@ export default function TaskDetailModal({ task, kanbanBoard, onClose, onUpdated,
   );
   const [editDescription, setEditDescription] = useState(task.description || "");
   const [editBudgetHours, setEditBudgetHours] = useState<number>(task.durationHours ?? 8);
+  const [editPaddingDays, setEditPaddingDays] = useState<number>(task.paddingDays ?? 0);
+  const [editExternalEnd, setEditExternalEnd] = useState<string>(task.externalPlannedEnd || "");
 
   const [members, setMembers] = useState<{ users: {id:string;name:string;email:string}[]; roles: {id:string;name:string}[] }>({ users: [], roles: [] });
   const [assignType, setAssignType] = useState<"role" | "user">(task.assignedTo ? "user" : "role");
@@ -142,12 +154,26 @@ export default function TaskDetailModal({ task, kanbanBoard, onClose, onUpdated,
   const [aStart, setAStart] = useState(() => toDatePart(task.actualStart));
   const [aEnd, setAEnd] = useState(() => toDatePart(task.actualEnd));
   const [aStartTime, setAStartTime] = useState(() => toTimePart(task.actualStart, "09:00"));
-  const [aEndTime, setAEndTime] = useState(() => toTimePart(task.actualEnd, "11:00"));
+  const [aEndTime, setAEndTime] = useState(() => toTimePart(task.actualStart, "11:00"));
+
+  // AUTO-CALCULATE EXTERNAL DEADLINE (Leg Room)
+  useEffect(() => {
+    if (!pEnd) return;
+    const d = new Date(pEnd);
+    if (!isNaN(d.getTime())) {
+      d.setDate(d.getDate() + (editPaddingDays || 0));
+      setEditExternalEnd(d.toISOString().split("T")[0]);
+    }
+  }, [pEnd, editPaddingDays]);
 
   // Confirmation step — which status action is pending confirmation
   const [confirmingStatus, setConfirmingStatus] = useState<"in-progress" | "completed" | null>(null);
 
   const patchTask = async (fields: Record<string, any>) => {
+    if (isLocal && onLocalUpdate) {
+      onLocalUpdate(fields);
+      return;
+    }
     const res = await fetch("/api/tasks", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -180,6 +206,8 @@ export default function TaskDetailModal({ task, kanbanBoard, onClose, onUpdated,
         plannedStart: pStartISO,
         plannedEnd: pEndISO,
         durationHours: editBudgetHours,
+        paddingDays: editPaddingDays,
+        externalPlannedEnd: editExternalEnd,
         comment: comment.trim() || undefined,
       });
       showToast("Task updated", "success");
@@ -271,7 +299,7 @@ export default function TaskDetailModal({ task, kanbanBoard, onClose, onUpdated,
     setLoading(true);
     try {
       await patchTask({ archived: true });
-      showToast("Task archived", "success");
+      showToast("Task removed", "success");
       onUpdated();
     } catch (err: any) {
       showToast("Archive failed", "error");
@@ -502,6 +530,40 @@ export default function TaskDetailModal({ task, kanbanBoard, onClose, onUpdated,
                 </div>
 
                 <div className="space-y-3">
+                  {/* Client Visibility (Leg Room) */}
+                  <div className="space-y-1.5 p-2.5 bg-emerald-50/40 border border-emerald-100 rounded-xl shadow-sm">
+                    <span className="text-[10px] font-bold uppercase tracking-widest block text-emerald-700 mb-1">
+                      Client Visibility (Leg Room)
+                    </span>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Client Buffer</label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min={0}
+                            value={editPaddingDays}
+                            onChange={e => setEditPaddingDays(parseInt(e.target.value) || 0)}
+                            className="w-12 h-6 text-[11px] font-bold text-center bg-white border border-emerald-200 rounded text-emerald-800 outline-none focus:ring-1 focus:ring-emerald-400 transition-all"
+                          />
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Days</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between pt-1.5 border-t border-emerald-100/50">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Client Deadline</span>
+                        <div className="flex items-center gap-1.5 text-[11px] font-extrabold text-emerald-700">
+                          <Calendar size={12} className="opacity-60" />
+                          <input 
+                            type="date"
+                            value={editExternalEnd}
+                            onChange={e => setEditExternalEnd(e.target.value)}
+                            className="bg-transparent border-none p-0 outline-none w-[100px] text-right"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Status */}
                   <div className="space-y-1">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Current Status</span>

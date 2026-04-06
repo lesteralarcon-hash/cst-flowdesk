@@ -23,9 +23,10 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   try {
     const session = await auth();
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
     const { searchParams } = new URL(req.url);
+    const shareToken = searchParams.get("shareToken");
+    
+    if (!session && !shareToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const projectId = searchParams.get("projectId");
     const showArchived = searchParams.get("showArchived") === "true";
     const windowStart = searchParams.get("windowStart");
@@ -59,6 +60,8 @@ export async function GET(req: Request) {
       recurringParentId: timelineItemsTable.recurringParentId,
       kanbanLaneId: timelineItemsTable.kanbanLaneId,
       clientProfileId: timelineItemsTable.clientProfileId,
+      paddingDays: timelineItemsTable.paddingDays,
+      externalPlannedEnd: timelineItemsTable.externalPlannedEnd,
       project: {
         id: projectsTable.id,
         name: projectsTable.name,
@@ -67,7 +70,9 @@ export async function GET(req: Request) {
     })
     .from(timelineItemsTable)
     .leftJoin(projectsTable, eq(projectsTable.id, timelineItemsTable.projectId))
-    .where(and(...conditions))
+    .where(shareToken 
+      ? eq(projectsTable.shareToken, shareToken) 
+      : and(...conditions))
     .orderBy(asc(timelineItemsTable.sortOrder));
 
     // Fetch meetings
@@ -322,7 +327,7 @@ export async function PATCH(req: Request) {
     const current = currentRows[0];
     if (!current) return NextResponse.json({ error: "Task not found" }, { status: 404 });
 
-    const ALLOWED = ["subject","owner","description","status","plannedStart","plannedEnd","actualStart","actualEnd","archived","sortOrder","durationHours","recurringFrequency","recurringUntil","isRecurringTemplate","kanbanLaneId"];
+    const ALLOWED = ["subject","owner","description","status","plannedStart","plannedEnd","actualStart","actualEnd","archived","sortOrder","durationHours","recurringFrequency","recurringUntil","isRecurringTemplate","kanbanLaneId","paddingDays","externalPlannedEnd"];
     const updateData: any = {};
     for (const key of ALLOWED) {
       if (!(key in rawUpdate) || rawUpdate[key] === undefined) continue;

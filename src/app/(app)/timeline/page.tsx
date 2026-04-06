@@ -13,6 +13,7 @@ import StitchLoading from "@/components/timeline/StitchLoading";
 import { PremiumSpinner } from "@/components/ui/PremiumSpinner";
 import { useToast } from "@/components/ui/ToastContext";
 import { useBreadcrumbs } from "@/lib/contexts/BreadcrumbContext";
+import TaskDetailModal from "@/components/tasks/TaskDetailModal";
 
 export default function TimelinePage() {
   return (
@@ -45,6 +46,8 @@ interface TimelineEvent {
   depth?: number;
   expanded?: boolean;
   hasChildren?: boolean;
+  paddingDays?: number;
+  externalPlannedEnd?: string;
 }
 
 function TimelineApp() {
@@ -75,6 +78,8 @@ function TimelineApp() {
   const [isLaunched, setIsLaunched] = useState(false);
   const [members, setMembers] = useState<any[]>([]);
   const [assignedIds, setAssignedIds] = useState<string[]>([]);
+  const [selectedTask, setSelectedTask] = useState<TimelineEvent | null>(null);
+  const [shareLink, setShareLink] = useState<string | null>(null);
   const mermaidRef = useRef<HTMLDivElement>(null);
   const interactiveGanttRef = useRef<HTMLDivElement>(null);
 
@@ -295,6 +300,9 @@ function TimelineApp() {
       const data = await res.json();
       if (res.ok) {
          showToast("Project successfully saved to Database!", "success");
+         if (data.shareToken) {
+           setShareLink(`${window.location.origin}/share/${data.shareToken}`);
+         }
       } else {
          showToast("Failed to save: " + (data.error || "Unknown"), "error");
       }
@@ -546,10 +554,22 @@ function TimelineApp() {
                  <button onClick={exportCsv} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-surface-muted text-text-muted bg-surface-default border-border-default shadow-sm">
                    <Download className="w-3.5 h-3.5" /> CSV
                  </button>
-                 <button onClick={saveToDb} disabled={savingToDb} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-primary-bg text-primary bg-primary-bg border-primary shadow-sm disabled:opacity-50">
-                   {savingToDb ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} 
-                   {savingToDb ? "Saving..." : "Save Project"}
-                 </button>
+                  {shareLink ? (
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(shareLink);
+                        showToast("Share link copied to clipboard!", "success");
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold border rounded-md bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm animate-bounce"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Copy Share Link
+                    </button>
+                  ) : (
+                    <button onClick={saveToDb} disabled={savingToDb} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md hover:bg-primary-bg text-primary bg-primary-bg border-primary shadow-sm disabled:opacity-50">
+                      {savingToDb ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} 
+                      {savingToDb ? "Saving..." : "Save Project"}
+                    </button>
+                  )}
                </div>
             </div>
 
@@ -569,7 +589,16 @@ function TimelineApp() {
                           <StitchLoading />
                        </div>
                     ) : (
-                       <InteractiveGantt events={events} onUpdateEvents={setEvents} scale={scale} ganttRef={interactiveGanttRef} />
+                        <InteractiveGantt 
+                           events={events} 
+                           onUpdateEvents={setEvents} 
+                           scale={scale} 
+                           ganttRef={interactiveGanttRef} 
+                           onTaskClick={(id) => {
+                             const ev = events.find(e => e.id === id);
+                             if (ev) setSelectedTask(ev);
+                           }}
+                        />
                     )}
                  </div>
                )}
@@ -577,18 +606,27 @@ function TimelineApp() {
               {activeTab === "list" && (
                 <div className="max-w-4xl mx-auto space-y-4">
                   {events.map((e, i) => (
-                    <div key={i} className="bg-surface-default p-5 rounded-xl border border-border-default shadow-sm flex gap-6 hover:shadow-md transition-shadow">
-                      <div className="flex flex-col items-center justify-center bg-surface-muted border border-border-default rounded-lg p-3 min-w-[100px] shrink-0">
+                    <div 
+                      key={i} 
+                      onClick={() => setSelectedTask(e)}
+                      className="bg-surface-default p-5 rounded-xl border border-border-default shadow-sm flex gap-6 hover:shadow-md transition-shadow cursor-pointer group"
+                    >
+                      <div className="flex flex-col items-center justify-center bg-surface-muted border border-border-default rounded-lg p-3 min-w-[100px] shrink-0 group-hover:border-primary/30 transition-all">
                          <span className="text-[10px] uppercase font-bold text-text-secondary">Owner</span>
                          <span className="text-sm font-semibold text-primary text-center mt-1">{e.owner}</span>
                       </div>
                       <div className="flex-1">
-                         <h3 className="text-lg font-bold text-text-primary mb-1">{e.subject}</h3>
+                         <h3 className="text-lg font-bold text-text-primary mb-1 group-hover:text-primary transition-all">{e.subject}</h3>
                          <p className="text-sm text-text-secondary mb-3">{e.description}</p>
                          <div className="flex flex-wrap gap-2">
                            <span className="text-xs font-medium bg-primary-bg text-primary px-2 py-1 rounded border border-primary/20 flex items-center gap-1.5">
                              <Calendar className="w-3 h-3" /> {e.startDate} to {e.endDate}
                            </span>
+                           {e.externalPlannedEnd && (
+                             <span className="text-xs font-medium bg-orange-50 text-orange-700 px-2 py-1 rounded border border-orange-200 flex items-center gap-1.5">
+                               <Zap className="w-3 h-3" /> Client: {e.externalPlannedEnd}
+                             </span>
+                           )}
                            <span className="text-xs font-medium bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-100 flex items-center gap-1.5">
                              <Clock className="w-3 h-3" /> {e.durationHours} hrs
                            </span>
@@ -602,6 +640,32 @@ function TimelineApp() {
                 </div>
               )}
             </div>
+
+            {selectedTask && (
+              <TaskDetailModal
+                task={{
+                  ...selectedTask,
+                  plannedStart: selectedTask.startDate + "T09:00:00.000Z",
+                  plannedEnd: selectedTask.endDate + "T17:00:00.000Z",
+                }}
+                isLocal={true}
+                onClose={() => setSelectedTask(null)}
+                onUpdated={() => {}}
+                onLocalUpdate={(updates) => {
+                  setEvents(prev => prev.map(ev => {
+                    if (ev.id === selectedTask.id) {
+                      const newEv = { ...ev, ...updates };
+                      if (updates.plannedStart) newEv.startDate = updates.plannedStart.split('T')[0];
+                      if (updates.plannedEnd) newEv.endDate = updates.plannedEnd.split('T')[0];
+                      return newEv;
+                    }
+                    return ev;
+                  }));
+                  // If subject changed, we need to update selectedTask too for the modal UI
+                  if (updates.subject) setSelectedTask(prev => prev ? ({ ...prev, subject: updates.subject }) : null);
+                }}
+              />
+            )}
 
           </div>
         ) : (
