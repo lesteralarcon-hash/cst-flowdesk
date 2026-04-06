@@ -26,10 +26,9 @@ function TasksContent() {
       fetch("/api/projects")
         .then(r => r.json())
         .then(data => {
-          if (Array.isArray(data)) {
-            const found = data.find((p: any) => p.id === projectId);
-            setProjectName(found?.name ?? null);
-          }
+          const list = Array.isArray(data) ? data : (data?.projects || []);
+          const found = list.find((p: any) => p.id === projectId);
+          setProjectName(found?.name ?? null);
         })
         .catch(() => {});
     } else {

@@ -43,8 +43,8 @@ export default function LeftNav({ initialApps, user, settings }: LeftNavProps) {
     if (!user) return;
     setProjectsLoading(true);
     fetch("/api/projects")
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setProjects(Array.isArray(data) ? data : []))
+      .then(r => r.ok ? r.json() : { projects: [] })
+      .then(data => setProjects(Array.isArray(data.projects) ? data.projects : []))
       .catch(() => setProjects([]))
       .finally(() => setProjectsLoading(false));
   }, [user]);

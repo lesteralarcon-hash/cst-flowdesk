@@ -457,9 +457,9 @@ function NewMeetingModal({ onClose, onSuccess }: { onClose: () => void; onSucces
       .catch(() => {})
       .finally(() => setLoadingAccounts(false));
     fetch("/api/projects")
-      .then(r => r.ok ? r.json() : [])
-      .then(data => { if (Array.isArray(data)) setProjects(data); })
-      .catch(() => {});
+      .then(r => r.ok ? r.json() : { projects: [] })
+      .then(data => setProjects(Array.isArray(data.projects) ? data.projects : []))
+      .catch(() => setProjects([]));
     fetch("/api/skills?category=meetings")
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (Array.isArray(data)) setMeetingTypes(data); })
